@@ -1,0 +1,31 @@
+{
+  "name": "blockpose",
+  "version": "1.0.0",
+  "description": "BLOCKPOSE — a modern Minecraft skin posing studio for 3D skin renders, creator thumbnails, filters, backgrounds, and 4K exports.",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && vite build",
+    "dev": "vite --host 0.0.0.0",
+    "preview": "vite preview --host 0.0.0.0",
+    "build:single": "node build.js"
+  },
+  "dependencies": {
+    "lucide-react": "^1.17.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "skinview3d": "^3.4.2",
+    "three": "^0.184.0"
+  },
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.16",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.184.1",
+    "@vitejs/plugin-react": "^6.0.2",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16"
+  }
+}
