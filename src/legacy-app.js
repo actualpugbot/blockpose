@@ -35,6 +35,13 @@ const PARTS = [
   {key:'leftLeg',  name:'Left leg',  ic:'M11 4h4v14h-4z'},
 ];
 const ZERO = ()=>PARTS.reduce((o,p)=>(o[p.key]={x:0,y:0,z:0},o),{});
+const JOINTS = [
+  {key:'rightElbow', name:'Right elbow', part:'rightArm'},
+  {key:'leftElbow',  name:'Left elbow',  part:'leftArm'},
+  {key:'rightKnee',  name:'Right knee',  part:'rightLeg'},
+  {key:'leftKnee',   name:'Left knee',   part:'leftLeg'},
+];
+const ZERO_JOINTS = ()=>JOINTS.reduce((o,j)=>(o[j.key]={x:0,y:0,z:0},o),{});
 const LIGHTING = {
   ambientScale: 1.9,
   keyScale: 1.2,
@@ -45,7 +52,7 @@ const LIGHTING = {
 const state = {
   viewer:null, model:'auto-detect', detected:'default', skinURL:null, hasSkin:false,
   curSrc:'name', anim:null, animSpeed:1,
-  rig: ZERO(), bodyYaw:0, bodyPitch:0,
+  rig: ZERO(), joints: ZERO_JOINTS(), bodyYaw:0, bodyPitch:0,
   filters:{brightness:100,contrast:100,saturate:100,hue:0,sepia:0,grayscale:0,blur:0,vignette:0,grain:0},
   tint:{color:'#ff9d3c',amt:0},
   bg:{mode:'transparent', solid:'#1c1810', g1:'#f6a623', g2:'#1c1810', gAngle:180, chroma:'#00b140', img:null, fit:'cover'},
@@ -73,6 +80,7 @@ const SECOND_LAYER_FACES = [
   {name:'back', axis:'z', sign:-1, rect:p=>({x:p.u+p.w+p.d*2,y:p.v+p.d,w:p.w,h:p.h})},
 ];
 let secondLayerModel = null;
+let segmentedRig = null;
 
 /* ===================== ANIMATIONS ===================== */
 const ANIMS = [
@@ -90,18 +98,19 @@ const ANIMS = [
 const POSES = {
   rest:    {label:'Standing', svg:poseSVG('rest'), rig:ZERO(), yaw:0,pitch:0},
   tpose:   {label:'T-Pose',  svg:poseSVG('tpose'), rig:withRig({leftArm:{z:90},rightArm:{z:-90}})},
-  walk:    {label:'Walking', svg:poseSVG('walk'), rig:withRig({leftLeg:{x:-26},rightLeg:{x:26},leftArm:{x:24},rightArm:{x:-24}})},
-  run:     {label:'Running', svg:poseSVG('run'), rig:withRig({leftLeg:{x:-50},rightLeg:{x:50},leftArm:{x:55},rightArm:{x:-55},body:{x:14}}), pitch:0},
-  wave:    {label:'Waving',  svg:poseSVG('wave'), rig:withRig({rightArm:{z:-142,x:6},head:{y:-8}})},
-  point:   {label:'Pointing',svg:poseSVG('point'),rig:withRig({rightArm:{x:-92},head:{y:-14}})},
-  cross:   {label:'Arms x',  svg:poseSVG('cross'),rig:withRig({rightArm:{z:-78,x:-16},leftArm:{z:78,x:-16}})},
-  cheer:   {label:'Cheer',   svg:poseSVG('cheer'),rig:withRig({leftArm:{z:152},rightArm:{z:-152},head:{x:-8}})},
-  sit:     {label:'Sitting', svg:poseSVG('sit'),  rig:withRig({leftLeg:{x:-90},rightLeg:{x:-90},leftArm:{x:-16},rightArm:{x:-16}})},
+  walk:    {label:'Walking', svg:poseSVG('walk'), rig:withRig({leftLeg:{x:-26},rightLeg:{x:26},leftArm:{x:24},rightArm:{x:-24}}), joints:withJoints({leftKnee:{x:18},rightElbow:{x:-12},leftElbow:{x:12}})},
+  run:     {label:'Running', svg:poseSVG('run'), rig:withRig({leftLeg:{x:-50},rightLeg:{x:50},leftArm:{x:55},rightArm:{x:-55},body:{x:14}}), joints:withJoints({leftKnee:{x:34},rightKnee:{x:18},leftElbow:{x:28},rightElbow:{x:-34}}), pitch:0},
+  wave:    {label:'Waving',  svg:poseSVG('wave'), rig:withRig({rightArm:{z:-142,x:6},head:{y:-8}}), joints:withJoints({rightElbow:{x:-44}})},
+  point:   {label:'Pointing',svg:poseSVG('point'),rig:withRig({rightArm:{x:-92},head:{y:-14}}), joints:withJoints({rightElbow:{x:-8}})},
+  cross:   {label:'Arms x',  svg:poseSVG('cross'),rig:withRig({rightArm:{z:-78,x:-16},leftArm:{z:78,x:-16}}), joints:withJoints({rightElbow:{y:58},leftElbow:{y:-58}})},
+  cheer:   {label:'Cheer',   svg:poseSVG('cheer'),rig:withRig({leftArm:{z:152},rightArm:{z:-152},head:{x:-8}}), joints:withJoints({leftElbow:{x:-18},rightElbow:{x:-18}})},
+  sit:     {label:'Sitting', svg:poseSVG('sit'),  rig:withRig({leftLeg:{x:-90},rightLeg:{x:-90},leftArm:{x:-16},rightArm:{x:-16}}), joints:withJoints({leftKnee:{x:82},rightKnee:{x:82},leftElbow:{x:-10},rightElbow:{x:-10}})},
   sneak:   {label:'Sneak',   svg:poseSVG('sneak'),rig:withRig({body:{x:24},head:{x:-22},leftArm:{x:18},rightArm:{x:18}})},
-  hero:    {label:'Landing', svg:poseSVG('hero'), rig:withRig({rightLeg:{x:-64},leftLeg:{x:30},body:{x:18},rightArm:{x:-78},leftArm:{z:60,x:30},head:{x:18}})},
-  fight:   {label:'Fighter', svg:poseSVG('fight'),rig:withRig({leftLeg:{z:14,x:-14},rightLeg:{z:-14,x:14},leftArm:{x:-46,z:18},rightArm:{x:-58,z:-12},body:{y:-12}})},
+  hero:    {label:'Landing', svg:poseSVG('hero'), rig:withRig({rightLeg:{x:-64},leftLeg:{x:30},body:{x:18},rightArm:{x:-78},leftArm:{z:60,x:30},head:{x:18}}), joints:withJoints({rightKnee:{x:74},leftKnee:{x:28},rightElbow:{x:-22},leftElbow:{x:24}})},
+  fight:   {label:'Fighter', svg:poseSVG('fight'),rig:withRig({leftLeg:{z:14,x:-14},rightLeg:{z:-14,x:14},leftArm:{x:-46,z:18},rightArm:{x:-58,z:-12},body:{y:-12}}), joints:withJoints({leftKnee:{x:18},rightKnee:{x:32},leftElbow:{x:54},rightElbow:{x:46}})},
 };
 function withRig(parts){ const r=ZERO(); for(const k in parts){ Object.assign(r[k], parts[k]); } return r; }
+function withJoints(joints){ const r=ZERO_JOINTS(); for(const k in joints){ Object.assign(r[k], joints[k]); } return r; }
 
 /* ===================== FILTER PRESETS ===================== */
 const FILTER_PRESETS = {
@@ -205,6 +214,7 @@ async function applySkin(url, label){
     await v.loadSkin(url, {model: state.model});
   }catch(e){ /* loadSkin returns void for canvas src; ignore */ }
   state.detected = detectSlim() ? 'slim':'default';
+  rebuildSegmentedRig();
   rebuildSecondLayerModel();
   hideLoad();
   setStatus(label||'Custom skin');
@@ -231,6 +241,104 @@ async function fetchCape(name){
 function fileToURL(file){ return URL.createObjectURL(file); }
 
 /* ===================== POSE / RIG ===================== */
+const SEGMENTED_LIMBS = {
+  rightArm:{joint:'rightElbow', arm:true, inner:{u:40,v:16}, outer:{u:40,v:32}, pivotX:()=>isSlimModel()?-0.5:-1, pivotY:-4, upperY:-1, lowerY:-3, width:()=>isSlimModel()?3:4, outerWidth:()=>isSlimModel()?3.5:4.5},
+  leftArm: {joint:'leftElbow',  arm:true, inner:{u:32,v:48}, outer:{u:48,v:48}, pivotX:()=>isSlimModel()?0.5:1,  pivotY:-4, upperY:-1, lowerY:-3, width:()=>isSlimModel()?3:4, outerWidth:()=>isSlimModel()?3.5:4.5},
+  rightLeg:{joint:'rightKnee',  arm:false,inner:{u:0, v:16}, outer:{u:0, v:32}, pivotX:()=>0, pivotY:-6, upperY:-3, lowerY:-3, width:4, outerWidth:4.5},
+  leftLeg: {joint:'leftKnee',   arm:false,inner:{u:16,v:48}, outer:{u:0, v:48}, pivotX:()=>0, pivotY:-6, upperY:-3, lowerY:-3, width:4, outerWidth:4.5},
+};
+
+function disposeSegmentedRig(){
+  if(!segmentedRig) return;
+  Object.values(segmentedRig.parts).forEach(entry=>entry.part.remove(entry.root));
+  segmentedRig.geometries.forEach(g=>g.dispose());
+  segmentedRig.materials.forEach(m=>m.dispose());
+  segmentedRig = null;
+}
+function rebuildSegmentedRig(){
+  disposeSegmentedRig();
+  const skin=state.viewer?.playerObject?.skin;
+  if(!skin) return;
+  const geometries=[], materials=[], parts={};
+  for(const [partKey,cfg] of Object.entries(SEGMENTED_LIMBS)){
+    const part=skin[partKey];
+    if(!part?.innerLayer) continue;
+    const root=new THREE.Group();
+    root.name=`${partKey}BendRig`;
+    const upper=new THREE.Group();
+    const lowerJoint=new THREE.Group();
+    lowerJoint.name=`${cfg.joint}Pivot`;
+    const lower=new THREE.Group();
+    upper.add(makeSegmentMesh(partKey, cfg, false, false, geometries, materials), makeSegmentMesh(partKey, cfg, false, true, geometries, materials));
+    lower.add(makeSegmentMesh(partKey, cfg, true, false, geometries, materials), makeSegmentMesh(partKey, cfg, true, true, geometries, materials));
+    root.add(upper, lowerJoint);
+    lowerJoint.add(lower);
+    part.add(root);
+    parts[partKey]={part, root, upper, lowerJoint};
+  }
+  segmentedRig={parts, geometries, materials};
+  syncSegmentedRig();
+}
+function makeSegmentMesh(partKey, cfg, lower, outer, geometries, materials){
+  const width=valueOf(outer?cfg.outerWidth:cfg.width);
+  const height=outer?6.25:6;
+  const depth=outer?4.5:4;
+  const yOffset=lower?6:0;
+  const geometry=new THREE.BoxGeometry(width, height, depth);
+  setSegmentUVs(geometry, outer?cfg.outer.u:cfg.inner.u, outer?cfg.outer.v:cfg.inner.v, valueOf(cfg.width), yOffset, 6, 4);
+  const source=state.viewer.playerObject.skin[partKey][outer?'outerLayer':'innerLayer'].material;
+  const material=source.clone();
+  material.map=source.map;
+  material.needsUpdate=true;
+  const mesh=new THREE.Mesh(geometry, material);
+  mesh.name=outer?'outer':'inner';
+  const x=valueOf(cfg.pivotX);
+  mesh.position.set(lower?0:x, lower?cfg.lowerY:cfg.upperY, 0);
+  geometries.push(geometry); materials.push(material);
+  return mesh;
+}
+function setSegmentUVs(box,u,v,width,yOffset,height,depth){
+  const toFaceVertices=(x1,y1,x2,y2)=>[
+    new THREE.Vector2(x1/64,1-y2/64), new THREE.Vector2(x2/64,1-y2/64),
+    new THREE.Vector2(x2/64,1-y1/64), new THREE.Vector2(x1/64,1-y1/64),
+  ];
+  const top=toFaceVertices(u+depth, v, u+width+depth, v+depth);
+  const bottom=toFaceVertices(u+width+depth, v, u+width*2+depth, v+depth);
+  const left=toFaceVertices(u, v+depth+yOffset, u+depth, v+depth+yOffset+height);
+  const front=toFaceVertices(u+depth, v+depth+yOffset, u+width+depth, v+depth+yOffset+height);
+  const right=toFaceVertices(u+width+depth, v+depth+yOffset, u+width+depth*2, v+depth+yOffset+height);
+  const back=toFaceVertices(u+width+depth*2, v+depth+yOffset, u+width*2+depth*2, v+depth+yOffset+height);
+  const uvRight=[right[3],right[2],right[0],right[1]];
+  const uvLeft=[left[3],left[2],left[0],left[1]];
+  const uvTop=[top[3],top[2],top[0],top[1]];
+  const uvBottom=[bottom[0],bottom[1],bottom[3],bottom[2]];
+  const uvFront=[front[3],front[2],front[0],front[1]];
+  const uvBack=[back[3],back[2],back[0],back[1]];
+  const data=[];
+  for(const face of [uvRight,uvLeft,uvTop,uvBottom,uvFront,uvBack]) for(const uv of face) data.push(uv.x,uv.y);
+  box.attributes.uv.set(new Float32Array(data));
+  box.attributes.uv.needsUpdate=true;
+}
+function jointIsBent(joint){
+  const r=state.joints[joint];
+  return !!r && (Math.abs(r.x)>0.01 || Math.abs(r.y)>0.01 || Math.abs(r.z)>0.01);
+}
+function syncSegmentedRig(){
+  const skin=state.viewer?.playerObject?.skin;
+  if(!skin || !segmentedRig) return;
+  for(const [partKey,cfg] of Object.entries(SEGMENTED_LIMBS)){
+    const entry=segmentedRig.parts[partKey], part=skin[partKey];
+    if(!entry || !part) continue;
+    const active=!state.anim && jointIsBent(cfg.joint);
+    entry.root.visible=active;
+    entry.root.traverse(obj=>{ if(obj.isMesh && obj.name==='outer') obj.visible = state.render.layerStyle !== 'off'; });
+    entry.lowerJoint.position.set(valueOf(cfg.pivotX), cfg.pivotY, 0);
+    const r=state.joints[cfg.joint];
+    entry.lowerJoint.rotation.set((r?.x||0)*D2R, (r?.y||0)*D2R, (r?.z||0)*D2R);
+    part.innerLayer.visible=!active;
+    part.outerLayer.visible=!active && state.render.layerStyle === 'flat';
+  }
+}
 function applyRig(){
   const v=state.viewer; if(!v||!v.playerObject) return;
   const s=v.playerObject.skin;
@@ -238,6 +346,7 @@ function applyRig(){
     const part=s[p.key], r=state.rig[p.key]; if(!part) continue;
     part.rotation.set(r.x*D2R, r.y*D2R, r.z*D2R);
   }
+  syncSegmentedRig();
   v.playerWrapper.rotation.y = state.bodyYaw*D2R;
   v.playerWrapper.rotation.x = state.bodyPitch*D2R;
 }
@@ -245,6 +354,7 @@ function setPose(key){
   const p=POSES[key]; if(!p) return;
   clearAnim();
   state.rig = JSON.parse(JSON.stringify(p.rig));
+  state.joints = JSON.parse(JSON.stringify(p.joints||ZERO_JOINTS()));
   state.bodyYaw = p.yaw||0; state.bodyPitch = p.pitch||0;
   syncRigUI(); applyRig();
   $$('#poseGrid .pose-btn').forEach(b=>b.classList.toggle('on', b.dataset.pose===key));
@@ -252,25 +362,30 @@ function setPose(key){
 function clearAnim(){
   if(state.anim){ state.viewer.animation=null; state.anim=null; }
   $$('#animChips .chip').forEach(c=>c.classList.remove('on'));
+  syncSegmentedRig();
 }
 function setAnim(id){
   const a=ANIMS.find(x=>x.id===id); if(!a) return;
   if(state.anim===id){ clearAnim(); applyRig(); return; }
   $$('#poseGrid .pose-btn').forEach(b=>b.classList.remove('on'));
   state.anim=id;
+  syncSegmentedRig();
   const inst=a.make(); inst.speed=state.animSpeed;
   state.viewer.animation=inst;
   $$('#animChips .chip').forEach(c=>c.classList.toggle('on', c.dataset.anim===id));
 }
 function resetPose(){
   clearAnim();
-  state.rig=ZERO(); state.bodyYaw=0; state.bodyPitch=0;
+  state.rig=ZERO(); state.joints=ZERO_JOINTS(); state.bodyYaw=0; state.bodyPitch=0;
   syncRigUI(); applyRig();
   $$('#poseGrid .pose-btn').forEach(b=>b.classList.remove('on'));
 }
 function syncRigUI(){
   for(const p of PARTS) for(const ax of ['x','y','z']){
     const inp=$(`#rig_${p.key}_${ax}`); if(inp){ inp.value=state.rig[p.key][ax]; inp.nextElementSibling.textContent=Math.round(state.rig[p.key][ax])+'°'; }
+  }
+  for(const j of JOINTS) for(const ax of ['x','y','z']){
+    const inp=$(`#joint_${j.key}_${ax}`); if(inp){ inp.value=state.joints[j.key][ax]; inp.nextElementSibling.textContent=Math.round(state.joints[j.key][ax])+'°'; }
   }
   $('#bodyYaw').value=state.bodyYaw; $('#bodyYawV').textContent=Math.round(state.bodyYaw)+'°';
   $('#bodyPitch').value=state.bodyPitch; $('#bodyPitchV').textContent=Math.round(state.bodyPitch)+'°';
@@ -330,6 +445,14 @@ function syncSecondLayerVisibility(){
     SECOND_LAYER_PARTS.forEach(p=>{ if(skin[p.key]?.outerLayer) skin[p.key].outerLayer.visible = flat; });
   }
   if(secondLayerModel) secondLayerModel.visible = voxels;
+  if(secondLayerModel){
+    secondLayerModel.groups.forEach(g=>{
+      const partKey=g.name.replace('3dOuterLayer','');
+      const cfg=SEGMENTED_LIMBS[partKey];
+      g.visible = voxels && !(cfg && !state.anim && jointIsBent(cfg.joint));
+    });
+  }
+  syncSegmentedRig();
 }
 function disposeSecondLayerModel(){
   if(!secondLayerModel) return;
@@ -635,7 +758,7 @@ function download(canvas,mime,isJpg){
 /* ===================== POSE LIBRARY (save/export) ===================== */
 function loadLib(){ try{ return JSON.parse(store?.getItem('bp_poses')||'[]'); }catch(e){ return []; } }
 function saveLib(){ try{ store?.setItem('bp_poses', JSON.stringify(state.poseLib)); }catch(e){} renderLib(); }
-function currentPoseData(){ return {v:1, name:'', rig:state.rig, bodyYaw:state.bodyYaw, bodyPitch:state.bodyPitch, ts:Date.now()}; }
+function currentPoseData(){ return {v:2, name:'', rig:state.rig, joints:state.joints, bodyYaw:state.bodyYaw, bodyPitch:state.bodyPitch, ts:Date.now()}; }
 function savePose(){
   clearAnim();
   const name=prompt('Name this pose:', 'Pose '+(state.poseLib.length+1)); if(name===null) return;
@@ -650,6 +773,8 @@ function applyPoseData(d){
   clearAnim();
   state.rig = Object.assign(ZERO(), JSON.parse(JSON.stringify(d.rig||{})));
   for(const p of PARTS){ if(!state.rig[p.key]) state.rig[p.key]={x:0,y:0,z:0}; }
+  state.joints = Object.assign(ZERO_JOINTS(), JSON.parse(JSON.stringify(d.joints||{})));
+  for(const j of JOINTS){ if(!state.joints[j.key]) state.joints[j.key]={x:0,y:0,z:0}; }
   state.bodyYaw=d.bodyYaw||0; state.bodyPitch=d.bodyPitch||0;
   syncRigUI(); applyRig();
   $$('#poseGrid .pose-btn').forEach(b=>b.classList.remove('on'));
@@ -668,6 +793,16 @@ function renderLib(){
 }
 
 /* ===================== UI BUILDERS ===================== */
+function jointControlsForPart(partKey){
+  const joint=JOINTS.find(j=>j.part===partKey);
+  if(!joint) return '';
+  return `<div class="joint-block">
+    <div class="joint-title">${joint.name}</div>
+    <div class="mini-grid">
+      ${['x','y','z'].map(ax=>`<div class="mini"><label>${ax.toUpperCase()} ${ax==='x'?'bend':ax==='y'?'twist':'side'}</label><input type="range" id="joint_${joint.key}_${ax}" min="-180" max="180" value="0"><span class="val" style="text-align:left">0°</span></div>`).join('')}
+    </div>
+  </div>`;
+}
 function buildUI(){
   // animations
   $('#animChips').innerHTML = ANIMS.map(a=>`<button class="chip" data-anim="${a.id}"><span class="ic">${a.ic}</span>${a.name}</button>`).join('');
@@ -679,7 +814,7 @@ function buildUI(){
       <div class="rig-head"><svg class="pj" viewBox="0 0 24 24" fill="none"><rect x="6" y="3" width="12" height="18" rx="2" stroke="currentColor" stroke-width="1.6"/></svg><span class="nm">${p.name}</span><svg class="cx" viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="m9 6 6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="rig-body"><div class="mini-grid">
         ${['x','y','z'].map(ax=>`<div class="mini"><label>${ax.toUpperCase()} ${ax==='x'?'pitch':ax==='y'?'yaw':'roll'}</label><input type="range" id="rig_${p.key}_${ax}" min="-180" max="180" value="0"><span class="val" style="text-align:left">0°</span></div>`).join('')}
-      </div></div>
+      </div>${jointControlsForPart(p.key)}</div>
     </div>`).join('');
   // filter presets
   $('#filterPresets').innerHTML = Object.entries(FILTER_PRESETS).map(([k,p])=>`<button class="chip${k==='none'?' on':''}" data-fp="${k}">${p.label}</button>`).join('');
@@ -718,7 +853,7 @@ function wire(){
     $$('#modelSeg button').forEach(x=>x.classList.toggle('on',x===b)); state.model=b.dataset.model;
     if(state.skinURL){
       Promise.resolve(state.viewer.loadSkin(state.skinURL,{model:state.model}))
-        .finally(()=>{state.detected=detectSlim()?'slim':'default';rebuildSecondLayerModel();applyRig();setStatus();});
+        .finally(()=>{state.detected=detectSlim()?'slim':'default';rebuildSegmentedRig();rebuildSecondLayerModel();applyRig();setStatus();});
     }
     setStatus();
   });
@@ -749,6 +884,10 @@ function wire(){
   PARTS.forEach(p=>['x','y','z'].forEach(ax=>{
     const inp=$(`#rig_${p.key}_${ax}`); if(!inp)return;
     inp.addEventListener('input',()=>{ clearAnim(); state.rig[p.key][ax]=+inp.value; inp.nextElementSibling.textContent=Math.round(+inp.value)+'°'; applyRig(); $$('#poseGrid .pose-btn').forEach(b=>b.classList.remove('on')); });
+  }));
+  JOINTS.forEach(j=>['x','y','z'].forEach(ax=>{
+    const inp=$(`#joint_${j.key}_${ax}`); if(!inp)return;
+    inp.addEventListener('input',()=>{ clearAnim(); state.joints[j.key][ax]=+inp.value; inp.nextElementSibling.textContent=Math.round(+inp.value)+'°'; applyRig(); syncSecondLayerVisibility(); $$('#poseGrid .pose-btn').forEach(b=>b.classList.remove('on')); });
   }));
   bindRange('#bodyYaw','#bodyYawV',v=>{clearAnim();state.bodyYaw=+v;applyRig();},v=>Math.round(v)+'°');
   bindRange('#bodyPitch','#bodyPitchV',v=>{clearAnim();state.bodyPitch=+v;applyRig();},v=>Math.round(v)+'°');
