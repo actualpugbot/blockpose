@@ -14,7 +14,7 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "skinview3d": "^3.4.2",
-    "three": "^0.184.0"
+    "three": "^0.156.1"
   },
   "type": "module",
   "packageManager": "pnpm@10.33.0",

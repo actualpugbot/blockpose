@@ -21,8 +21,8 @@ importers:
         specifier: ^3.4.2
         version: 3.4.2
       three:
-        specifier: ^0.184.0
-        version: 0.184.0
+        specifier: ^0.156.1
+        version: 0.156.1
     devDependencies:
       '@playwright/test':
         specifier: ^1.60.0
@@ -390,9 +390,6 @@ packages:
   three@0.156.1:
     resolution: {integrity: sha512-kP7H0FK9d/k6t/XvQ9FO6i+QrePoDcNhwl0I02+wmUJRNSLCUIDMcfObnzQvxb37/0Uc9TDT0T1HgsRRrO6SYQ==}
 
-  three@0.184.0:
-    resolution: {integrity: sha512-wtTRjG92pM5eUg/KuUnHsqSAlPM296brTOcLgMRqEeylYTh/CdtvKUvCyyCQTzFuStieWxvZb8mVTMvdPyUpxg==}
-
   tinyglobby@0.2.17:
     resolution: {integrity: sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==}
     engines: {node: '>=12.0.0'}
@@ -715,8 +712,6 @@ snapshots:
   source-map-js@1.2.1: {}
 
   three@0.156.1: {}
-
-  three@0.184.0: {}
 
   tinyglobby@0.2.17:
     dependencies:

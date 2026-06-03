@@ -1,4 +1,5 @@
 import * as skinview3d from 'skinview3d';
+import * as THREE from 'three';
 
 /* ===================================================================
    BLOCKPOSE — Minecraft Skin Studio
@@ -43,10 +44,29 @@ const state = {
   tint:{color:'#ff9d3c',amt:0},
   bg:{mode:'transparent', solid:'#1c1810', g1:'#f6a623', g2:'#1c1810', gAngle:180, chroma:'#00b140', img:null, fit:'cover'},
   amb:90, key:60, cape:false, capeURL:null, elytra:false,
+  render:{layerStyle:'3d', layerDepth:0.55},
   thumb:{on:false,title:'',sub:'',font:84,col:'#ffffff',out:'#16130d',outW:10,align:'left',mx:72,ms:100},
   exp:{fmt:'png-trans', aspect:'portrait', res:'2k'},
   poseLib: loadLib()
 };
+
+const SECOND_LAYER_PARTS = [
+  {key:'head', width:8, height:8, depth:8, uv:()=>({u:32,v:0,w:8,h:8,d:8})},
+  {key:'body', width:8, height:12, depth:4, uv:()=>({u:16,v:32,w:8,h:12,d:4})},
+  {key:'rightArm', width:()=>isSlimModel()?3:4, height:12, depth:4, uv:()=>({u:40,v:32,w:isSlimModel()?3:4,h:12,d:4})},
+  {key:'leftArm', width:()=>isSlimModel()?3:4, height:12, depth:4, uv:()=>({u:48,v:48,w:isSlimModel()?3:4,h:12,d:4})},
+  {key:'rightLeg', width:4, height:12, depth:4, uv:()=>({u:0,v:32,w:4,h:12,d:4})},
+  {key:'leftLeg', width:4, height:12, depth:4, uv:()=>({u:0,v:48,w:4,h:12,d:4})},
+];
+const SECOND_LAYER_FACES = [
+  {name:'top', axis:'y', sign:1, rect:p=>({x:p.u+p.d,y:p.v,w:p.w,h:p.d})},
+  {name:'bottom', axis:'y', sign:-1, rect:p=>({x:p.u+p.w+p.d,y:p.v,w:p.w,h:p.d})},
+  {name:'left', axis:'x', sign:-1, rect:p=>({x:p.u,y:p.v+p.d,w:p.d,h:p.h})},
+  {name:'front', axis:'z', sign:1, rect:p=>({x:p.u+p.d,y:p.v+p.d,w:p.w,h:p.h})},
+  {name:'right', axis:'x', sign:1, rect:p=>({x:p.u+p.w+p.d,y:p.v+p.d,w:p.d,h:p.h})},
+  {name:'back', axis:'z', sign:-1, rect:p=>({x:p.u+p.w+p.d*2,y:p.v+p.d,w:p.w,h:p.h})},
+];
+let secondLayerModel = null;
 
 /* ===================== ANIMATIONS ===================== */
 const ANIMS = [
@@ -179,14 +199,20 @@ async function applySkin(url, label){
     await v.loadSkin(url, {model: state.model});
   }catch(e){ /* loadSkin returns void for canvas src; ignore */ }
   state.detected = detectSlim() ? 'slim':'default';
+  rebuildSecondLayerModel();
   hideLoad();
   setStatus(label||'Custom skin');
   applyRig();
 }
 function detectSlim(){
+  try{ return state.viewer?.playerObject?.skin?.modelType === 'slim'; }catch(e){}
   // skinview3d sets the player slim flag internally; infer from arm box width if exposed
   try{ const a=state.viewer.playerObject.skin.rightArm; return a && a.userData && a.userData.slim; }catch(e){}
   return state.detected==='slim';
+}
+function isSlimModel(){
+  try{ return state.viewer?.playerObject?.skin?.modelType === 'slim'; }catch(e){}
+  return state.detected === 'slim';
 }
 async function fetchCape(name){
   try{
@@ -283,6 +309,129 @@ function applyLights(){
   v.globalLight.intensity = state.amb/100*1.9;
   v.cameraLight.intensity = state.key/100*1.0;
 }
+function syncSecondLayerVisibility(){
+  const skin=state.viewer?.playerObject?.skin;
+  if(!skin) return;
+  const flat = state.render.layerStyle === 'flat';
+  const voxels = state.render.layerStyle === '3d';
+  try{ skin.setOuterLayerVisible(flat); }catch(e){
+    SECOND_LAYER_PARTS.forEach(p=>{ if(skin[p.key]?.outerLayer) skin[p.key].outerLayer.visible = flat; });
+  }
+  if(secondLayerModel) secondLayerModel.visible = voxels;
+}
+function disposeSecondLayerModel(){
+  if(!secondLayerModel) return;
+  secondLayerModel.groups.forEach(g=>g.parent?.remove(g));
+  secondLayerModel.geometries.forEach(g=>g.dispose());
+  secondLayerModel.materials.forEach(m=>m.dispose());
+  secondLayerModel = null;
+}
+function rebuildSecondLayerModel(){
+  disposeSecondLayerModel();
+  const v=state.viewer;
+  const skin=v?.playerObject?.skin;
+  if(!v?.skinCanvas || !skin || !state.hasSkin){
+    syncSecondLayerVisibility();
+    return;
+  }
+
+  const canvas=v.skinCanvas;
+  const ctx=canvas.getContext('2d', {willReadFrequently:true});
+  const scale=canvas.width/64;
+  const layerDepth=state.render.layerDepth;
+  const materials=new Map();
+  const geometries=[];
+  const groups=[];
+
+  const materialFor=color=>{
+    if(!materials.has(color.key)){
+      materials.set(color.key, new THREE.MeshStandardMaterial({
+        color: color.hex,
+        roughness: 0.72,
+        metalness: 0,
+        transparent: color.alpha < 1,
+        opacity: color.alpha,
+        alphaTest: 0.05,
+      }));
+    }
+    return materials.get(color.key);
+  };
+
+  for(const cfg of SECOND_LAYER_PARTS){
+    const part=skin[cfg.key];
+    if(!part?.outerLayer?.parent) continue;
+    const width=valueOf(cfg.width), height=valueOf(cfg.height), depth=valueOf(cfg.depth);
+    const center=part.outerLayer.position;
+    const group=new THREE.Group();
+    group.name=`${cfg.key}3dOuterLayer`;
+    group.position.copy(center);
+    group.visible = state.render.layerStyle === '3d';
+
+    const uv=cfg.uv();
+    for(const face of SECOND_LAYER_FACES){
+      const rect=face.rect(uv);
+      for(let py=0; py<rect.h; py++){
+        for(let px=0; px<rect.w; px++){
+          const color=sampleSkinPixel(ctx, scale, rect.x+px, rect.y+py);
+          if(!color) continue;
+          const voxel=makeLayerVoxel(face, px, py, rect, width, height, depth, layerDepth);
+          const geometry=new THREE.BoxGeometry(voxel.sx, voxel.sy, voxel.sz);
+          const mesh=new THREE.Mesh(geometry, materialFor(color));
+          mesh.position.set(voxel.x, voxel.y, voxel.z);
+          group.add(mesh);
+          geometries.push(geometry);
+        }
+      }
+    }
+
+    part.outerLayer.parent.add(group);
+    groups.push(group);
+  }
+
+  secondLayerModel = {
+    groups,
+    geometries,
+    materials: Array.from(materials.values()),
+  };
+  syncSecondLayerVisibility();
+}
+function valueOf(v){ return typeof v === 'function' ? v() : v; }
+function sampleSkinPixel(ctx, scale, x, y){
+  const sx=Math.floor(x*scale), sy=Math.floor(y*scale);
+  const sw=Math.max(1, Math.ceil(scale)), sh=Math.max(1, Math.ceil(scale));
+  const data=ctx.getImageData(sx, sy, sw, sh).data;
+  let r=0,g=0,b=0,a=0,count=0;
+  for(let i=0;i<data.length;i+=4){
+    const alpha=data[i+3]/255;
+    if(alpha<=0.02) continue;
+    r+=data[i]*alpha; g+=data[i+1]*alpha; b+=data[i+2]*alpha; a+=alpha; count++;
+  }
+  if(!count || a/count < 0.05) return null;
+  const alpha=clamp(a/count, 0, 1);
+  r=Math.round(r/a); g=Math.round(g/a); b=Math.round(b/a);
+  const hex=(r<<16)|(g<<8)|b;
+  return {hex, alpha, key:`${hex}:${Math.round(alpha*255)}`};
+}
+function makeLayerVoxel(face, px, py, rect, width, height, depth, t){
+  const sx=face.axis==='x'?t:1;
+  const sy=face.axis==='y'?t:1;
+  const sz=face.axis==='z'?t:1;
+  let x=0,y=0,z=0;
+  if(face.name==='front'){
+    x=-width/2+px+0.5; y=height/2-py-0.5; z=depth/2+t/2;
+  }else if(face.name==='back'){
+    x=width/2-px-0.5; y=height/2-py-0.5; z=-depth/2-t/2;
+  }else if(face.name==='left'){
+    x=-width/2-t/2; y=height/2-py-0.5; z=depth/2-px-0.5;
+  }else if(face.name==='right'){
+    x=width/2+t/2; y=height/2-py-0.5; z=-depth/2+px+0.5;
+  }else if(face.name==='top'){
+    x=-width/2+px+0.5; y=height/2+t/2; z=-depth/2+py+0.5;
+  }else if(face.name==='bottom'){
+    x=-width/2+px+0.5; y=-height/2-t/2; z=depth/2-py-0.5;
+  }
+  return {x,y,z,sx,sy,sz};
+}
 function applyCape(){
   const v=state.viewer; if(!v) return;
   const url = state.capeURL || 'https://crafatar.com/capes/MHF_Steve';
@@ -290,7 +439,7 @@ function applyCape(){
     try{ v.loadCape(url, {backEquipment: state.elytra?'elytra':'cape'}); }catch(e){}
   } else { v.loadCape(null); }
 }
-function applyAll(){ applyFilters(); applyBg(); applyLights(); }
+function applyAll(){ applyFilters(); applyBg(); applyLights(); syncSecondLayerVisibility(); }
 
 /* ===================== EXPORT PIPELINE ===================== */
 function captureModel(W,H){
@@ -543,7 +692,10 @@ function wire(){
   // model
   $('#modelSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
     $$('#modelSeg button').forEach(x=>x.classList.toggle('on',x===b)); state.model=b.dataset.model;
-    if(state.skinURL){ state.viewer.loadSkin(state.skinURL,{model:state.model}); setTimeout(applyRig,30);} 
+    if(state.skinURL){
+      Promise.resolve(state.viewer.loadSkin(state.skinURL,{model:state.model}))
+        .finally(()=>{state.detected=detectSlim()?'slim':'default';rebuildSecondLayerModel();applyRig();setStatus();});
+    }
     setStatus();
   });
 
@@ -613,6 +765,15 @@ function wire(){
   // lights
   bindRange('#ambLight','#ambLightV',v=>{state.amb=+v;applyLights();},v=>Math.round(v)+'%');
   bindRange('#keyLight','#keyLightV',v=>{state.key=+v;applyLights();},v=>Math.round(v)+'%');
+  $('#skinLayerMode').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+    $$('#skinLayerMode button').forEach(x=>x.classList.toggle('on',x===b));
+    state.render.layerStyle=b.dataset.layer;
+    syncSecondLayerVisibility();
+  });
+  bindRange('#skinLayerDepth','#skinLayerDepthV',v=>{
+    state.render.layerDepth=+v;
+    rebuildSecondLayerModel();
+  },v=>(+v).toFixed(2));
   $('#capeToggle').onclick=()=>{state.cape=!state.cape;if(state.cape)state.elytra=false;$('#capeToggle').classList.toggle('on',state.cape);$('#elytraToggle').classList.remove('on');applyCape();};
   $('#elytraToggle').onclick=()=>{state.elytra=!state.elytra;if(state.elytra)state.cape=false;$('#elytraToggle').classList.toggle('on',state.elytra);$('#capeToggle').classList.remove('on');applyCape();};
 

@@ -51,6 +51,7 @@ header{
 }
 .seg button.on{background:var(--panel);color:var(--ink);box-shadow:0 1px 3px rgba(20,22,28,.12)}
 .seg button:not(.on):hover{color:var(--ink2)}
+.skin-layer-seg button{flex:1;min-width:0}
 .field{
   flex:1 1 auto;display:flex;align-items:center;background:var(--panel);border:1px solid var(--line2);
   border-radius:var(--r2);padding:0 4px 0 13px;height:40px;transition:.15s;min-width:0
