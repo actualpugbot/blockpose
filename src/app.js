@@ -32,6 +32,11 @@ const PARTS = [
   {key:'leftLeg',  name:'Left leg',  ic:'M11 4h4v14h-4z'},
 ];
 const ZERO = ()=>PARTS.reduce((o,p)=>(o[p.key]={x:0,y:0,z:0},o),{});
+const LIGHTING = {
+  ambientScale: 1.9,
+  keyScale: 1.2,
+  exposure: 1.08,
+};
 
 const state = {
   viewer:null, model:'auto-detect', detected:'default', skinURL:null, hasSkin:false,
@@ -40,7 +45,7 @@ const state = {
   filters:{brightness:100,contrast:100,saturate:100,hue:0,sepia:0,grayscale:0,blur:0,vignette:0,grain:0},
   tint:{color:'#ff9d3c',amt:0},
   bg:{mode:'transparent', solid:'#1c1810', g1:'#f6a623', g2:'#1c1810', gAngle:180, chroma:'#00b140', img:null, fit:'cover'},
-  amb:90, key:60, cape:false, capeURL:null, elytra:false,
+  amb:160, key:90, cape:false, capeURL:null, elytra:false,
   thumb:{on:false,title:'',sub:'',font:84,col:'#ffffff',out:'#16130d',outW:10,align:'left',mx:72,ms:100},
   exp:{fmt:'png-trans', aspect:'portrait', res:'2k'},
   poseLib: loadLib()
@@ -134,15 +139,15 @@ function boot(){
 function initViewer(){
   const cv = $('#viewer');
   state.viewer = new skinview3d.SkinViewer({
-    canvas: cv, width:440, height:560,
+    canvas: cv, width:1320, height:1680,
     zoom:0.82, fov:42, background:null,
     preserveDrawingBuffer:true, enableControls:true
   });
   const v=state.viewer;
   v.controls.enableZoom=true; v.controls.enablePan=false;
   v.autoRotateSpeed=2.2;
-  v.globalLight.intensity = state.amb/100*1.9;
-  v.cameraLight.intensity = state.key/100*1.0;
+  applyRendererExposure(v);
+  applyLights();
   // keep manual rig applied every frame after animation clears
   const tick=()=>{ if(!state.anim && state.hasSkin) applyRig(); requestAnimationFrame(tick); };
   requestAnimationFrame(tick);
@@ -280,8 +285,14 @@ function applyBg(){
 }
 function applyLights(){
   const v=state.viewer; if(!v) return;
-  v.globalLight.intensity = state.amb/100*1.9;
-  v.cameraLight.intensity = state.key/100*1.0;
+  v.globalLight.intensity = state.amb/100*LIGHTING.ambientScale;
+  v.cameraLight.intensity = state.key/100*LIGHTING.keyScale;
+  applyRendererExposure(v);
+}
+function applyRendererExposure(v){
+  if(v?.renderer && 'toneMappingExposure' in v.renderer){
+    v.renderer.toneMappingExposure = LIGHTING.exposure;
+  }
 }
 function applyCape(){
   const v=state.viewer; if(!v) return;

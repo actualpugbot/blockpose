@@ -325,7 +325,7 @@ textarea.title-in:focus,input.title-in:focus{border-color:var(--brand);box-shado
 
       <div class="canvas-frame" id="canvasFrame">
         <div id="bgLayer"></div>
-        <canvas id="viewer" width="440" height="560"></canvas>
+        <canvas id="viewer" width="1320" height="1680"></canvas>
         <div id="vignetteLayer"></div>
         <div id="grainLayer"></div>
       </div>
@@ -2629,7 +2629,7 @@ function boot(){
 function initViewer(){
   const cv = $('#viewer');
   state.viewer = new skinview3d.SkinViewer({
-    canvas: cv, width:440, height:560,
+    canvas: cv, width:1320, height:1680,
     zoom:0.82, fov:42, background:null,
     preserveDrawingBuffer:true, enableControls:true
   });

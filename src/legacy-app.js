@@ -35,6 +35,12 @@ const PARTS = [
   {key:'leftLeg',  name:'Left leg',  ic:'M11 4h4v14h-4z'},
 ];
 const ZERO = ()=>PARTS.reduce((o,p)=>(o[p.key]={x:0,y:0,z:0},o),{});
+const LIGHTING = {
+  ambientScale: 1.9,
+  keyScale: 1.2,
+  exposure: 1.08,
+  layerEmissive: 0.14,
+};
 
 const state = {
   viewer:null, model:'auto-detect', detected:'default', skinURL:null, hasSkin:false,
@@ -43,7 +49,7 @@ const state = {
   filters:{brightness:100,contrast:100,saturate:100,hue:0,sepia:0,grayscale:0,blur:0,vignette:0,grain:0},
   tint:{color:'#ff9d3c',amt:0},
   bg:{mode:'transparent', solid:'#1c1810', g1:'#f6a623', g2:'#1c1810', gAngle:180, chroma:'#00b140', img:null, fit:'cover'},
-  amb:90, key:60, cape:false, capeURL:null, elytra:false,
+  amb:160, key:90, cape:false, capeURL:null, elytra:false,
   render:{layerStyle:'3d', layerDepth:0.55},
   thumb:{on:false,title:'',sub:'',font:84,col:'#ffffff',out:'#16130d',outW:10,align:'left',mx:72,ms:100},
   exp:{fmt:'png-trans', aspect:'portrait', res:'2k'},
@@ -156,15 +162,15 @@ function boot(){
 function initViewer(){
   const cv = $('#viewer');
   state.viewer = new skinview3d.SkinViewer({
-    canvas: cv, width:440, height:560,
+    canvas: cv, width:1320, height:1680,
     zoom:0.82, fov:42, background:null,
     preserveDrawingBuffer:true, enableControls:true
   });
   const v=state.viewer;
   v.controls.enableZoom=true; v.controls.enablePan=false;
   v.autoRotateSpeed=2.2;
-  v.globalLight.intensity = state.amb/100*1.9;
-  v.cameraLight.intensity = state.key/100*1.0;
+  applyRendererExposure(v);
+  applyLights();
   // keep manual rig applied every frame after animation clears
   const tick=()=>{ if(!state.anim && state.hasSkin) applyRig(); requestAnimationFrame(tick); };
   requestAnimationFrame(tick);
@@ -306,8 +312,14 @@ function applyBg(){
 }
 function applyLights(){
   const v=state.viewer; if(!v) return;
-  v.globalLight.intensity = state.amb/100*1.9;
-  v.cameraLight.intensity = state.key/100*1.0;
+  v.globalLight.intensity = state.amb/100*LIGHTING.ambientScale;
+  v.cameraLight.intensity = state.key/100*LIGHTING.keyScale;
+  applyRendererExposure(v);
+}
+function applyRendererExposure(v){
+  if(v?.renderer && 'toneMappingExposure' in v.renderer){
+    v.renderer.toneMappingExposure = LIGHTING.exposure;
+  }
 }
 function syncSecondLayerVisibility(){
   const skin=state.viewer?.playerObject?.skin;
@@ -347,7 +359,9 @@ function rebuildSecondLayerModel(){
     if(!materials.has(color.key)){
       materials.set(color.key, new THREE.MeshStandardMaterial({
         color: color.hex,
-        roughness: 0.72,
+        emissive: color.hex,
+        emissiveIntensity: LIGHTING.layerEmissive,
+        roughness: 0.62,
         metalness: 0,
         transparent: color.alpha < 1,
         opacity: color.alpha,
@@ -374,7 +388,7 @@ function rebuildSecondLayerModel(){
         for(let px=0; px<rect.w; px++){
           const color=sampleSkinPixel(ctx, scale, rect.x+px, rect.y+py);
           if(!color) continue;
-          const voxel=makeLayerVoxel(face, px, py, rect, width, height, depth, layerDepth);
+          const voxel=makeLayerVoxel(face, px, py, rect, width, height, depth, layerDepth, cfg.key);
           const geometry=new THREE.BoxGeometry(voxel.sx, voxel.sy, voxel.sz);
           const mesh=new THREE.Mesh(geometry, materialFor(color));
           mesh.position.set(voxel.x, voxel.y, voxel.z);
@@ -412,7 +426,7 @@ function sampleSkinPixel(ctx, scale, x, y){
   const hex=(r<<16)|(g<<8)|b;
   return {hex, alpha, key:`${hex}:${Math.round(alpha*255)}`};
 }
-function makeLayerVoxel(face, px, py, rect, width, height, depth, t){
+function makeLayerVoxel(face, px, py, rect, width, height, depth, t, partKey){
   const sx=face.axis==='x'?t:1;
   const sy=face.axis==='y'?t:1;
   const sz=face.axis==='z'?t:1;
@@ -422,13 +436,23 @@ function makeLayerVoxel(face, px, py, rect, width, height, depth, t){
   }else if(face.name==='back'){
     x=width/2-px-0.5; y=height/2-py-0.5; z=-depth/2-t/2;
   }else if(face.name==='left'){
-    x=-width/2-t/2; y=height/2-py-0.5; z=depth/2-px-0.5;
+    x=-width/2-t/2;
+    if(partKey==='head'){
+      y=height/2-py-0.5; z=-depth/2+px+0.5;
+    }else{
+      y=height/2-py-0.5; z=depth/2-px-0.5;
+    }
   }else if(face.name==='right'){
-    x=width/2+t/2; y=height/2-py-0.5; z=-depth/2+px+0.5;
+    x=width/2+t/2;
+    if(partKey==='head'){
+      y=height/2-py-0.5; z=depth/2-px-0.5;
+    }else{
+      y=height/2-py-0.5; z=-depth/2+px+0.5;
+    }
   }else if(face.name==='top'){
     x=-width/2+px+0.5; y=height/2+t/2; z=-depth/2+py+0.5;
   }else if(face.name==='bottom'){
-    x=-width/2+px+0.5; y=-height/2-t/2; z=depth/2-py-0.5;
+    x=-width/2+px+0.5; y=-height/2-t/2; z=-depth/2+py+0.5;
   }
   return {x,y,z,sx,sy,sz};
 }

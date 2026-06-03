@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import './styles.css';
 
+const THEME_KEY = 'blockpose-theme';
+
 const studioMarkup = `<div class="app">
   <header>
     <div class="brand">
@@ -24,6 +26,10 @@ const studioMarkup = `<div class="app">
     </div>
 
     <div class="head-right">
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch to dark mode" aria-pressed="false" title="Switch to dark mode">
+        <svg class="sun" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v3M12 18.5v3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M2.5 12h3M18.5 12h3M4.6 19.4l2.1-2.1M17.3 6.7l2.1-2.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none"><path d="M20.2 15.7A8.3 8.3 0 0 1 8.3 3.8 8.7 8.7 0 1 0 20.2 15.7Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+      </button>
       <div class="model-seg" id="modelSeg" title="Arm model">
         <button class="on" data-model="auto-detect">Auto</button>
         <button data-model="default">Classic</button>
@@ -39,7 +45,7 @@ const studioMarkup = `<div class="app">
 
       <div class="canvas-frame" id="canvasFrame">
         <div id="bgLayer"></div>
-        <canvas id="viewer" width="440" height="560"></canvas>
+        <canvas id="viewer" width="1320" height="1680"></canvas>
         <div id="vignetteLayer"></div>
         <div id="grainLayer"></div>
       </div>
@@ -137,8 +143,8 @@ const studioMarkup = `<div class="app">
           </div>
           <div class="group">
             <div class="group-h"><h4>Lighting</h4><div class="hr"></div><span class="tag">Studio</span></div>
-            <div class="row"><div class="rl">Ambient</div><div class="slider"><input type="range" id="ambLight" min="0" max="200" value="90"><span class="val" id="ambLightV">90%</span></div></div>
-            <div class="row"><div class="rl">Key light</div><div class="slider"><input type="range" id="keyLight" min="0" max="200" value="60"><span class="val" id="keyLightV">60%</span></div></div>
+            <div class="row"><div class="rl">Ambient</div><div class="slider"><input type="range" id="ambLight" min="0" max="200" value="160"><span class="val" id="ambLightV">160%</span></div></div>
+            <div class="row"><div class="rl">Key light</div><div class="slider"><input type="range" id="keyLight" min="0" max="200" value="90"><span class="val" id="keyLightV">90%</span></div></div>
           </div>
           <div class="group">
             <div class="group-h"><h4>Render Options</h4><div class="hr"></div><span class="tag">Model</span></div>
@@ -218,7 +224,43 @@ const studioMarkup = `<div class="app">
 export default function App() {
   useEffect(() => {
     document.documentElement.dataset.app = 'blockpose';
+    const themeToggle = document.getElementById('themeToggle');
+    const systemPrefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+    const savedTheme = (() => {
+      try {
+        return localStorage.getItem(THEME_KEY);
+      } catch {
+        return null;
+      }
+    })();
+
+    const applyTheme = (theme: string) => {
+      const isDark = theme === 'dark';
+      document.documentElement.dataset.theme = theme;
+      themeToggle?.classList.toggle('on', isDark);
+      themeToggle?.setAttribute('aria-pressed', String(isDark));
+      themeToggle?.setAttribute('aria-label', isDark ? 'Switch to light mode' : 'Switch to dark mode');
+      themeToggle?.setAttribute('title', isDark ? 'Switch to light mode' : 'Switch to dark mode');
+    };
+
+    applyTheme(savedTheme === 'dark' || (!savedTheme && systemPrefersDark) ? 'dark' : 'light');
+
+    const handleThemeToggle = () => {
+      const nextTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      applyTheme(nextTheme);
+      try {
+        localStorage.setItem(THEME_KEY, nextTheme);
+      } catch {
+        // Theme persistence is nice to have; the toggle still works without storage.
+      }
+    };
+
+    themeToggle?.addEventListener('click', handleThemeToggle);
     void import('./legacy-app.js');
+
+    return () => {
+      themeToggle?.removeEventListener('click', handleThemeToggle);
+    };
   }, []);
 
   return <div dangerouslySetInnerHTML={{ __html: studioMarkup }} />;
