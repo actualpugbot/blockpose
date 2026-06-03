@@ -64,6 +64,7 @@ const studioMarkup = `<div class="app">
         <button class="tool" id="spinTool" title="Auto-rotate"><svg viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v4h-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="lbl">Spin</span></button>
         <button class="tool" id="resetView" title="Reset camera"><svg viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 1 9 9M3 12l3-3m-3 3 3 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></svg><span class="lbl">Recenter</span></button>
         <button class="tool" id="resetPoseTool" title="Reset pose"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3v3m0 12v3m9-9h-3M6 12H3m13.5-6.5-2 2m-7 7-2 2m11 0-2-2m-7-7-2-2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span class="lbl">Rest pose</span></button>
+        <button class="tool" id="undoTool" type="button" title="Nothing to undo" disabled><svg viewBox="0 0 24 24" fill="none"><path d="M9 8 5 12l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 12h8a5 5 0 1 1 0 10h-1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="lbl">Undo</span></button>
       </div>
     </section>
 
@@ -146,6 +147,7 @@ const studioMarkup = `<div class="app">
             <div class="row"><div class="rl">Ambient</div><div class="slider"><input type="range" id="ambLight" min="0" max="200" value="160"><span class="val" id="ambLightV">160%</span></div></div>
             <div class="row"><div class="rl">Key light</div><div class="slider"><input type="range" id="keyLight" min="0" max="200" value="90"><span class="val" id="keyLightV">90%</span></div></div>
             <div class="row"><div class="rl">Exposure</div><div class="slider"><input type="range" id="modelExposure" min="50" max="140" value="92"><span class="val" id="modelExposureV">92%</span></div></div>
+            <div class="row"><div class="rl">Layer boost</div><div class="slider"><input type="range" id="skinBoost" min="0" max="24" value="8"><span class="val" id="skinBoostV">8%</span></div></div>
           </div>
           <div class="group">
             <div class="group-h"><h4>Render Options</h4><div class="hr"></div><span class="tag">Model</span></div>
