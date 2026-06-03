@@ -215,9 +215,11 @@ input[type=range]::-webkit-slider-thumb{
 input[type=range]::-moz-range-thumb{width:16px;height:16px;border:1.5px solid var(--brand);border-radius:50%;background:var(--panel);box-shadow:0 1px 4px rgba(20,22,28,.18)}
 .slider .val{font-family:var(--mono);font-size:11px;color:var(--muted);flex:0 0 42px;text-align:right}
 
-.mini-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 10px}
-.mini{display:flex;flex-direction:column;gap:3px}
+.mini-grid{display:grid;grid-template-columns:1fr;gap:8px}
+.mini{display:grid;grid-template-columns:74px minmax(0,1fr) 42px;align-items:center;gap:10px}
 .mini label{font-family:var(--mono);font-size:9px;letter-spacing:.08em;color:var(--faint);text-transform:uppercase}
+.mini input[type=range]{width:100%}
+.mini .val{text-align:right!important}
 .rig-part{border:1px solid var(--line2);border-radius:8px;margin-bottom:8px;overflow:hidden;background:var(--panel)}
 .rig-head{display:flex;align-items:center;gap:9px;padding:11px 13px;cursor:pointer;user-select:none}
 .rig-head:hover{background:var(--panel2)}

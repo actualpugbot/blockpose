@@ -35,7 +35,7 @@ const ZERO = ()=>PARTS.reduce((o,p)=>(o[p.key]={x:0,y:0,z:0},o),{});
 const LIGHTING = {
   ambientScale: 1.9,
   keyScale: 1.2,
-  exposure: 1.08,
+  exposureDefault: 0.92,
 };
 
 const state = {
@@ -45,7 +45,7 @@ const state = {
   filters:{brightness:100,contrast:100,saturate:100,hue:0,sepia:0,grayscale:0,blur:0,vignette:0,grain:0},
   tint:{color:'#ff9d3c',amt:0},
   bg:{mode:'transparent', solid:'#1c1810', g1:'#f6a623', g2:'#1c1810', gAngle:180, chroma:'#00b140', img:null, fit:'cover'},
-  amb:160, key:90, cape:false, capeURL:null, elytra:false,
+  amb:160, key:90, exposure:Math.round(LIGHTING.exposureDefault*100), cape:false, capeURL:null, elytra:false,
   thumb:{on:false,title:'',sub:'',font:84,col:'#ffffff',out:'#16130d',outW:10,align:'left',mx:72,ms:100},
   exp:{fmt:'png-trans', aspect:'portrait', res:'2k'},
   poseLib: loadLib()
@@ -291,7 +291,7 @@ function applyLights(){
 }
 function applyRendererExposure(v){
   if(v?.renderer && 'toneMappingExposure' in v.renderer){
-    v.renderer.toneMappingExposure = LIGHTING.exposure;
+    v.renderer.toneMappingExposure = state.exposure/100;
   }
 }
 function applyCape(){
@@ -624,6 +624,7 @@ function wire(){
   // lights
   bindRange('#ambLight','#ambLightV',v=>{state.amb=+v;applyLights();},v=>Math.round(v)+'%');
   bindRange('#keyLight','#keyLightV',v=>{state.key=+v;applyLights();},v=>Math.round(v)+'%');
+  bindRange('#modelExposure','#modelExposureV',v=>{state.exposure=+v;applyLights();},v=>Math.round(v)+'%');
   $('#capeToggle').onclick=()=>{state.cape=!state.cape;if(state.cape)state.elytra=false;$('#capeToggle').classList.toggle('on',state.cape);$('#elytraToggle').classList.remove('on');applyCape();};
   $('#elytraToggle').onclick=()=>{state.elytra=!state.elytra;if(state.elytra)state.cape=false;$('#elytraToggle').classList.toggle('on',state.elytra);$('#capeToggle').classList.remove('on');applyCape();};
 

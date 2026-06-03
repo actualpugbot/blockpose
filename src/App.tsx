@@ -145,6 +145,7 @@ const studioMarkup = `<div class="app">
             <div class="group-h"><h4>Lighting</h4><div class="hr"></div><span class="tag">Studio</span></div>
             <div class="row"><div class="rl">Ambient</div><div class="slider"><input type="range" id="ambLight" min="0" max="200" value="160"><span class="val" id="ambLightV">160%</span></div></div>
             <div class="row"><div class="rl">Key light</div><div class="slider"><input type="range" id="keyLight" min="0" max="200" value="90"><span class="val" id="keyLightV">90%</span></div></div>
+            <div class="row"><div class="rl">Exposure</div><div class="slider"><input type="range" id="modelExposure" min="50" max="140" value="92"><span class="val" id="modelExposureV">92%</span></div></div>
           </div>
           <div class="group">
             <div class="group-h"><h4>Render Options</h4><div class="hr"></div><span class="tag">Model</span></div>

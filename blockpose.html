@@ -185,9 +185,11 @@ input[type=range]::-webkit-slider-thumb{
 input[type=range]::-moz-range-thumb{width:16px;height:16px;border:1.5px solid var(--brand);border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(20,22,28,.18)}
 .slider .val{font-family:var(--mono);font-size:11px;color:var(--muted);flex:0 0 42px;text-align:right}
 
-.mini-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 10px}
-.mini{display:flex;flex-direction:column;gap:3px}
+.mini-grid{display:grid;grid-template-columns:1fr;gap:8px}
+.mini{display:grid;grid-template-columns:74px minmax(0,1fr) 42px;align-items:center;gap:10px}
 .mini label{font-family:var(--mono);font-size:9px;letter-spacing:.08em;color:var(--faint);text-transform:uppercase}
+.mini input[type=range]{width:100%}
+.mini .val{text-align:right!important}
 .rig-part{border:1px solid var(--line2);border-radius:11px;margin-bottom:8px;overflow:hidden;background:var(--panel)}
 .rig-head{display:flex;align-items:center;gap:9px;padding:11px 13px;cursor:pointer;user-select:none}
 .rig-head:hover{background:var(--panel2)}
@@ -423,8 +425,9 @@ textarea.title-in:focus,input.title-in:focus{border-color:var(--brand);box-shado
           </div>
           <div class="group">
             <div class="group-h"><h4>Lighting</h4><div class="hr"></div><span class="tag">Studio</span></div>
-            <div class="row"><div class="rl">Ambient</div><div class="slider"><input type="range" id="ambLight" min="0" max="200" value="90"><span class="val" id="ambLightV">90%</span></div></div>
-            <div class="row"><div class="rl">Key light</div><div class="slider"><input type="range" id="keyLight" min="0" max="200" value="60"><span class="val" id="keyLightV">60%</span></div></div>
+            <div class="row"><div class="rl">Ambient</div><div class="slider"><input type="range" id="ambLight" min="0" max="200" value="160"><span class="val" id="ambLightV">160%</span></div></div>
+            <div class="row"><div class="rl">Key light</div><div class="slider"><input type="range" id="keyLight" min="0" max="200" value="90"><span class="val" id="keyLightV">90%</span></div></div>
+            <div class="row"><div class="rl">Exposure</div><div class="slider"><input type="range" id="modelExposure" min="50" max="140" value="92"><span class="val" id="modelExposureV">92%</span></div></div>
           </div>
           <div class="group">
             <div class="group-h"><h4>Extras</h4><div class="hr"></div><span class="tag">Equip</span></div>
@@ -2527,6 +2530,11 @@ const PARTS = [
   {key:'leftLeg',  name:'Left leg',  ic:'M11 4h4v14h-4z'},
 ];
 const ZERO = ()=>PARTS.reduce((o,p)=>(o[p.key]={x:0,y:0,z:0},o),{});
+const LIGHTING = {
+  ambientScale: 1.9,
+  keyScale: 1.2,
+  exposureDefault: 0.92,
+};
 
 const state = {
   viewer:null, model:'auto-detect', detected:'default', skinURL:null, hasSkin:false,
@@ -2535,7 +2543,7 @@ const state = {
   filters:{brightness:100,contrast:100,saturate:100,hue:0,sepia:0,grayscale:0,blur:0,vignette:0,grain:0},
   tint:{color:'#ff9d3c',amt:0},
   bg:{mode:'transparent', solid:'#1c1810', g1:'#f6a623', g2:'#1c1810', gAngle:180, chroma:'#00b140', img:null, fit:'cover'},
-  amb:90, key:60, cape:false, capeURL:null, elytra:false,
+  amb:160, key:90, exposure:Math.round(LIGHTING.exposureDefault*100), cape:false, capeURL:null, elytra:false,
   thumb:{on:false,title:'',sub:'',font:84,col:'#ffffff',out:'#16130d',outW:10,align:'left',mx:72,ms:100},
   exp:{fmt:'png-trans', aspect:'portrait', res:'2k'},
   poseLib: loadLib()
@@ -2636,8 +2644,8 @@ function initViewer(){
   const v=state.viewer;
   v.controls.enableZoom=true; v.controls.enablePan=false;
   v.autoRotateSpeed=2.2;
-  v.globalLight.intensity = state.amb/100*1.9;
-  v.cameraLight.intensity = state.key/100*1.0;
+  applyRendererExposure(v);
+  applyLights();
   // keep manual rig applied every frame after animation clears
   const tick=()=>{ if(!state.anim && state.hasSkin) applyRig(); requestAnimationFrame(tick); };
   requestAnimationFrame(tick);
@@ -2775,8 +2783,14 @@ function applyBg(){
 }
 function applyLights(){
   const v=state.viewer; if(!v) return;
-  v.globalLight.intensity = state.amb/100*1.9;
-  v.cameraLight.intensity = state.key/100*1.0;
+  v.globalLight.intensity = state.amb/100*LIGHTING.ambientScale;
+  v.cameraLight.intensity = state.key/100*LIGHTING.keyScale;
+  applyRendererExposure(v);
+}
+function applyRendererExposure(v){
+  if(v?.renderer && 'toneMappingExposure' in v.renderer){
+    v.renderer.toneMappingExposure = state.exposure/100;
+  }
 }
 function applyCape(){
   const v=state.viewer; if(!v) return;
@@ -3108,6 +3122,7 @@ function wire(){
   // lights
   bindRange('#ambLight','#ambLightV',v=>{state.amb=+v;applyLights();},v=>Math.round(v)+'%');
   bindRange('#keyLight','#keyLightV',v=>{state.key=+v;applyLights();},v=>Math.round(v)+'%');
+  bindRange('#modelExposure','#modelExposureV',v=>{state.exposure=+v;applyLights();},v=>Math.round(v)+'%');
   $('#capeToggle').onclick=()=>{state.cape=!state.cape;if(state.cape)state.elytra=false;$('#capeToggle').classList.toggle('on',state.cape);$('#elytraToggle').classList.remove('on');applyCape();};
   $('#elytraToggle').onclick=()=>{state.elytra=!state.elytra;if(state.elytra)state.cape=false;$('#elytraToggle').classList.toggle('on',state.elytra);$('#capeToggle').classList.remove('on');applyCape();};
 
