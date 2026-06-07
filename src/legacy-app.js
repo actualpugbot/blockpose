@@ -11,6 +11,7 @@ const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const D2R = Math.PI/180, R2D = 180/Math.PI;
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const CONTROL_ACTION_PAN = 2;
 
 /* ---- procedural grain texture (used in CSS + export) ---- */
 const grainURL = (()=>{
@@ -24,6 +25,7 @@ const grainImg = new Image(); grainImg.src = grainURL;
 
 /* ---- safe storage (degrades gracefully in sandboxes) ---- */
 const store = (()=>{ try{const k='__bp_test';localStorage.setItem(k,'1');localStorage.removeItem(k);return localStorage;}catch(e){return null;} })();
+const DEFAULT_MODEL_ZOOM = 0.5;
 
 /* ===================== STATE ===================== */
 const PARTS = [
@@ -35,6 +37,9 @@ const PARTS = [
   {key:'leftLeg',  name:'Left leg',  ic:'M11 4h4v14h-4z'},
 ];
 const ZERO = ()=>PARTS.reduce((o,p)=>(o[p.key]={x:0,y:0,z:0},o),{});
+const ALL_VISIBLE = ()=>PARTS.reduce((o,p)=>(o[p.key]=true,o),{});
+const PART_KEY_SET = new Set(PARTS.map(p=>p.key));
+const LIMB_KEYS = new Set(['rightArm','leftArm','rightLeg','leftLeg']);
 const JOINTS = [
   {key:'rightElbow', name:'Right elbow', part:'rightArm'},
   {key:'leftElbow',  name:'Left elbow',  part:'leftArm'},
@@ -53,6 +58,8 @@ const state = {
   viewer:null, model:'auto-detect', detected:'default', skinURL:null, hasSkin:false,
   curSrc:'name', anim:null, animSpeed:1,
   rig: ZERO(), joints: ZERO_JOINTS(), bodyYaw:0, bodyPitch:0,
+  stageTool:'drag',
+  visibleParts: ALL_VISIBLE(), selectedParts: [],
   filters:{brightness:100,contrast:100,saturate:100,hue:0,sepia:0,grayscale:0,blur:0,vignette:0,grain:0},
   tint:{color:'#ff9d3c',amt:0},
   bg:{mode:'transparent', solid:'#1c1810', g1:'#f6a623', g2:'#1c1810', gAngle:180, chroma:'#00b140', img:null, fit:'cover'},
@@ -68,6 +75,14 @@ const history = {
   pending: null,
   restoring: false,
 };
+const stageSelection = {
+  raycaster: new THREE.Raycaster(),
+  pointer: new THREE.Vector2(),
+  worldBox: new THREE.Box3(),
+  worldPoint: new THREE.Vector3(),
+  drag: null,
+};
+const STAGE_DRAG_THRESHOLD = 6;
 
 const SECOND_LAYER_PARTS = [
   {key:'head', width:8, height:8, depth:8, uv:()=>({u:32,v:0,w:8,h:8,d:8})},
@@ -185,6 +200,7 @@ function snapshotState(){
     animSpeed: state.animSpeed,
     rig: cloneData(state.rig),
     joints: cloneData(state.joints),
+    visibleParts: cloneData(state.visibleParts),
     bodyYaw: state.bodyYaw,
     bodyPitch: state.bodyPitch,
     filters: cloneData(state.filters),
@@ -265,14 +281,16 @@ function initViewer(){
   const cv = $('#viewer');
   state.viewer = new skinview3d.SkinViewer({
     canvas: cv, width:1320, height:1680,
-    zoom:0.82, fov:42, background:null,
+    zoom:DEFAULT_MODEL_ZOOM, fov:42, background:null,
     preserveDrawingBuffer:true, enableControls:true
   });
   const v=state.viewer;
-  v.controls.enableZoom=true; v.controls.enablePan=false;
+  v.controls.enableZoom=true; v.controls.enablePan=true;
+  if(v.controls.mouseButtons) v.controls.mouseButtons.RIGHT = CONTROL_ACTION_PAN;
   v.autoRotateSpeed=2.2;
   applyRendererExposure(v);
   applyLights();
+  setCameraView('front', true);
   // keep manual rig applied every frame after animation clears
   const tick=()=>{ if(!state.anim && state.hasSkin) applyRig(); requestAnimationFrame(tick); };
   requestAnimationFrame(tick);
@@ -310,6 +328,7 @@ async function applySkin(url, label){
   rebuildSegmentedRig();
   rebuildSecondLayerModel();
   syncSkinMaterialLighting();
+  refreshPartBindings();
   hideLoad();
   setStatus(label||'Custom skin');
   applyRig();
@@ -366,6 +385,114 @@ function syncSkinMaterialLighting(){
     ].forEach(material=>tuneSkinMaterial(material, intensity));
   }
   secondLayerModel?.materials?.forEach(material=>tuneVoxelMaterial(material, intensity));
+}
+
+function isPartVisible(partKey){
+  return state.visibleParts[partKey] !== false;
+}
+function getVisiblePartKeys(){
+  return PARTS.map(part=>part.key).filter(isPartVisible);
+}
+function allPartsVisible(){
+  return PARTS.every(part=>isPartVisible(part.key));
+}
+function sanitizePartKeys(keys){
+  return [...new Set((keys||[]).filter(key=>PART_KEY_SET.has(key)))];
+}
+function setSelectedParts(keys){
+  state.selectedParts = sanitizePartKeys(keys).filter(isPartVisible);
+  syncPartSelectionUI();
+}
+function setPartVisibility(keys, visible){
+  sanitizePartKeys(keys).forEach(key=>{ state.visibleParts[key] = visible; });
+  if(!visible) state.selectedParts = state.selectedParts.filter(isPartVisible);
+  applyPartVisibility();
+  syncPartSelectionUI();
+}
+function applyPartVisibility(){
+  const skin=state.viewer?.playerObject?.skin;
+  if(!skin) return;
+  for(const part of PARTS){
+    if(skin[part.key]) skin[part.key].visible = isPartVisible(part.key);
+  }
+}
+function tagPartObjects(){
+  const skin=state.viewer?.playerObject?.skin;
+  if(!skin) return;
+  for(const part of PARTS){
+    const root = skin[part.key];
+    if(!root) continue;
+    root.traverse(obj=>{ obj.userData.partKey = part.key; });
+  }
+}
+function refreshPartBindings(){
+  tagPartObjects();
+  state.selectedParts = state.selectedParts.filter(isPartVisible);
+  applyPartVisibility();
+  syncPartSelectionUI();
+}
+function syncPartSelectionUI(){
+  const cards = $$('#rig .rig-part');
+  if(!cards.length) return;
+  const selected = new Set(state.selectedParts);
+  cards.forEach(card=>{
+    const key = card.dataset.part;
+    const visible = isPartVisible(key);
+    card.classList.toggle('selected', selected.has(key));
+    card.classList.toggle('is-hidden', !visible);
+    const toggle = card.querySelector('.part-visibility');
+    if(toggle){
+      toggle.classList.toggle('off', !visible);
+      toggle.setAttribute('aria-pressed', String(visible));
+      toggle.setAttribute('title', visible ? 'Hide part' : 'Show part');
+      toggle.setAttribute('aria-label', visible ? 'Hide part' : 'Show part');
+    }
+  });
+
+  const summary = $('#rigSelectionSummary');
+  if(summary){
+    if(!state.selectedParts.length){
+      summary.textContent = 'Click a part to select it, drag empty space to box-select, then drag a selected part to pose it.';
+    }else if(state.selectedParts.length === 1){
+      const part = PARTS.find(entry=>entry.key === state.selectedParts[0]);
+      summary.textContent = `${part?.name || '1 part'} selected. Drag it in the viewer to rotate it, or hide it from the eye control.`;
+    }else{
+      summary.textContent = `${state.selectedParts.length} parts selected. Drag any selected part to rotate them together.`;
+    }
+  }
+
+  const clearBtn = $('#clearSelectionBtn');
+  if(clearBtn) clearBtn.disabled = state.selectedParts.length === 0;
+  const hideBtn = $('#hideSelectedPartsBtn');
+  if(hideBtn) hideBtn.disabled = state.selectedParts.length === 0;
+  const showAllBtn = $('#showAllPartsBtn');
+  if(showAllBtn) showAllBtn.disabled = allPartsVisible();
+}
+function stageToolDescription(mode){
+  return mode === 'drag'
+    ? 'Drag mode is on. Drag the model to orbit the camera.'
+    : 'Select mode is on. Click to select, drag empty space to box-select, then drag a selected part to pose it.';
+}
+function syncStageToolUI(){
+  const mode = state.stageTool || 'select';
+  const root = $('#stageModeControl');
+  if(root){
+    root.dataset.mode = mode;
+    $$('[data-stage-tool]').forEach(btn=>{
+      const active = btn.dataset.stageTool === mode;
+      btn.classList.toggle('on', active);
+      btn.setAttribute('aria-pressed', String(active));
+    });
+  }
+  const hint = $('#stagePoseTip');
+  if(hint) hint.textContent = stageToolDescription(mode);
+  const canvas = $('#viewer');
+  if(canvas) canvas.style.cursor = !isPosePaneActive() || mode === 'drag' ? 'grab' : 'crosshair';
+}
+function setStageTool(mode){
+  state.stageTool = mode === 'drag' ? 'drag' : 'select';
+  if(state.stageTool === 'drag') hideMarquee();
+  syncStageToolUI();
 }
 
 /* ===================== POSE / RIG ===================== */
@@ -475,8 +602,57 @@ function applyRig(){
     part.rotation.set(r.x*D2R, r.y*D2R, r.z*D2R);
   }
   syncSegmentedRig();
+  applyPartVisibility();
   v.playerWrapper.rotation.y = state.bodyYaw*D2R;
   v.playerWrapper.rotation.x = state.bodyPitch*D2R;
+}
+function getDefaultCameraDistance(vw){
+  const min = vw.controls?.minDistance ?? 10;
+  const max = vw.controls?.maxDistance ?? 256;
+  const raw = 4.5 + 16.5 / Math.tan((vw.fov * D2R) / 2) / DEFAULT_MODEL_ZOOM;
+  return clamp(raw, min, max);
+}
+function getCameraFocus(vw){
+  const seed = vw.camera.position.clone();
+  const root = seed.clone();
+  const body = seed.clone();
+  const head = seed.clone();
+  vw.playerObject.updateMatrixWorld?.(true);
+  vw.playerObject.getWorldPosition(root);
+  vw.playerObject.skin.body.getWorldPosition(body);
+  vw.playerObject.skin.head.getWorldPosition(head);
+  return {
+    x: root.x,
+    y: body.y + (head.y - body.y) * 0.45,
+    z: root.z,
+  };
+}
+function positionCamera(angle, saveState=false){
+  const vw=state.viewer; if(!vw) return;
+  const focus=getCameraFocus(vw);
+  const dist=getDefaultCameraDistance(vw);
+  const rad=angle*D2R;
+  vw.zoom=DEFAULT_MODEL_ZOOM;
+  vw.controls.target.set(focus.x, focus.y, focus.z);
+  vw.camera.position.set(
+    focus.x + Math.sin(rad) * dist,
+    focus.y,
+    focus.z + Math.cos(rad) * dist
+  );
+  vw.camera.lookAt(vw.controls.target);
+  vw.controls.update();
+  if(saveState && typeof vw.controls.saveState === 'function') vw.controls.saveState();
+}
+function setCameraView(view='front', saveState=false){
+  const angle={front:0,three:30,side:90,back:180}[view] ?? 0;
+  positionCamera(angle, saveState);
+}
+function recenterCamera(saveState=false){
+  const vw=state.viewer; if(!vw) return;
+  const dx=vw.camera.position.x - vw.controls.target.x;
+  const dz=vw.camera.position.z - vw.controls.target.z;
+  const angle=Number.isFinite(dx) && Number.isFinite(dz) ? Math.atan2(dx, dz) * R2D : 0;
+  positionCamera(angle, saveState);
 }
 function setPose(key){
   const p=POSES[key]; if(!p) return;
@@ -527,6 +703,7 @@ function poseStateKey(rig, joints, yaw, pitch){
   });
 }
 function matchingPoseKey(){
+  if(!allPartsVisible()) return null;
   const current = poseStateKey(state.rig, state.joints, state.bodyYaw, state.bodyPitch);
   return Object.entries(POSES).find(([, pose])=>
     poseStateKey(pose.rig, pose.joints || ZERO_JOINTS(), pose.yaw || 0, pose.pitch || 0) === current
@@ -641,6 +818,7 @@ function syncUndoableUI(){
   syncSceneUI();
   syncThumbUI();
   syncExportUI();
+  syncPartSelectionUI();
 }
 async function restoreSnapshot(snapshot){
   history.restoring = true;
@@ -652,6 +830,7 @@ async function restoreSnapshot(snapshot){
     state.animSpeed = next.animSpeed;
     state.rig = next.rig;
     state.joints = next.joints || ZERO_JOINTS();
+    state.visibleParts = Object.assign(ALL_VISIBLE(), next.visibleParts || {});
     state.bodyYaw = next.bodyYaw || 0;
     state.bodyPitch = next.bodyPitch || 0;
     state.filters = next.filters;
@@ -690,8 +869,10 @@ async function restoreSnapshot(snapshot){
       rebuildSegmentedRig();
     }
     rebuildSecondLayerModel();
+    refreshPartBindings();
     if(next.anim) setAnim(next.anim);
     applyRig();
+    state.viewer.zoom = DEFAULT_MODEL_ZOOM;
     applyAll();
     applyCape();
     syncUndoableUI();
@@ -908,7 +1089,7 @@ function applyCape(){
     try{ v.loadCape(url, {backEquipment: state.elytra?'elytra':'cape'}); }catch(e){}
   } else { v.loadCape(null); }
 }
-function applyAll(){ applyFilters(); applyBg(); applyLights(); syncSecondLayerVisibility(); }
+function applyAll(){ applyFilters(); applyBg(); applyLights(); syncSecondLayerVisibility(); applyPartVisibility(); }
 
 /* ===================== EXPORT PIPELINE ===================== */
 function captureModel(W,H){
@@ -1080,7 +1261,18 @@ function download(canvas,mime,isJpg){
 /* ===================== POSE LIBRARY (save/export) ===================== */
 function loadLib(){ try{ return JSON.parse(store?.getItem('bp_poses')||'[]'); }catch(e){ return []; } }
 function saveLib(){ try{ store?.setItem('bp_poses', JSON.stringify(state.poseLib)); }catch(e){} renderLib(); }
-function currentPoseData(){ return {v:2, name:'', rig:state.rig, joints:state.joints, bodyYaw:state.bodyYaw, bodyPitch:state.bodyPitch, ts:Date.now()}; }
+function currentPoseData(){
+  return {
+    v:3,
+    name:'',
+    rig:cloneData(state.rig),
+    joints:cloneData(state.joints),
+    visibleParts:cloneData(state.visibleParts),
+    bodyYaw:state.bodyYaw,
+    bodyPitch:state.bodyPitch,
+    ts:Date.now()
+  };
+}
 function savePose(){
   clearAnim();
   const name=prompt('Name this pose:', 'Pose '+(state.poseLib.length+1)); if(name===null) return;
@@ -1097,8 +1289,11 @@ function applyPoseData(d){
   for(const p of PARTS){ if(!state.rig[p.key]) state.rig[p.key]={x:0,y:0,z:0}; }
   state.joints = Object.assign(ZERO_JOINTS(), JSON.parse(JSON.stringify(d.joints||{})));
   for(const j of JOINTS){ if(!state.joints[j.key]) state.joints[j.key]={x:0,y:0,z:0}; }
+  state.visibleParts = Object.assign(ALL_VISIBLE(), JSON.parse(JSON.stringify(d.visibleParts||{})));
   state.bodyYaw=d.bodyYaw||0; state.bodyPitch=d.bodyPitch||0;
+  state.selectedParts = state.selectedParts.filter(isPartVisible);
   syncRigUI(); applyRig();
+  syncPartSelectionUI();
   $$('#poseGrid .pose-btn').forEach(b=>b.classList.remove('on'));
 }
 function renderLib(){
@@ -1131,9 +1326,16 @@ function buildUI(){
   // poses
   $('#poseGrid').innerHTML = Object.entries(POSES).map(([k,p])=>`<button class="pose-btn" data-pose="${k}">${p.svg}<span>${p.label}</span></button>`).join('');
   // rig
-  $('#rig').innerHTML = PARTS.map((p,i)=>`
+  $('#rig').innerHTML = `<div class="rig-tools">
+      <div class="rig-summary" id="rigSelectionSummary">Click a part to select it, drag empty space to box-select, then drag a selected part to pose it.</div>
+      <div class="rig-actions">
+        <button class="rig-action" id="clearSelectionBtn" type="button" disabled>Clear</button>
+        <button class="rig-action" id="hideSelectedPartsBtn" type="button" disabled>Hide selected</button>
+        <button class="rig-action" id="showAllPartsBtn" type="button">Show all</button>
+      </div>
+    </div>` + PARTS.map((p,i)=>`
     <div class="rig-part${i===0?' open':''}" data-part="${p.key}">
-      <div class="rig-head"><svg class="pj" viewBox="0 0 24 24" fill="none"><rect x="6" y="3" width="12" height="18" rx="2" stroke="currentColor" stroke-width="1.6"/></svg><span class="nm">${p.name}</span><svg class="cx" viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="m9 6 6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="rig-head"><svg class="pj" viewBox="0 0 24 24" fill="none"><rect x="6" y="3" width="12" height="18" rx="2" stroke="currentColor" stroke-width="1.6"/></svg><span class="nm">${p.name}</span><button class="part-visibility" type="button" data-part-action="toggle-visibility" title="Hide part" aria-label="Hide part" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="2.8" stroke="currentColor" stroke-width="1.7"/></svg></button><svg class="cx" viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="m9 6 6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="rig-body"><div class="mini-grid">
         ${['x','y','z'].map(ax=>`<div class="mini"><label>${ax.toUpperCase()} ${ax==='x'?'pitch':ax==='y'?'yaw':'roll'}</label><input type="range" id="rig_${p.key}_${ax}" min="-180" max="180" value="0"><span class="val" style="text-align:left">0°</span></div>`).join('')}
       </div>${jointControlsForPart(p.key)}</div>
@@ -1153,7 +1355,7 @@ function buildUI(){
   $('#aspectGrid').innerHTML = Object.entries(ASPECTS).map(([k,a])=>`<button class="size-btn${k==='portrait'?' on':''}" data-aspect="${k}"><span class="t">${a.label}</span><span class="d">${a.d}</span></button>`).join('');
   // res
   $('#resSeg').innerHTML = Object.keys(RES).map((k,i)=>`<button class="${k==='2k'?'on':''}" data-res="${k}">${k.toUpperCase()} · ${RES[k]}px</button>`).join('');
-  renderLib(); updateOutDims();
+  renderLib(); updateOutDims(); syncPartSelectionUI();
 }
 
 /* ===================== WIRING ===================== */
@@ -1186,7 +1388,7 @@ function wire(){
       $$('#modelSeg button').forEach(x=>x.classList.toggle('on',x===b)); state.model=b.dataset.model;
       if(state.skinURL){
         return Promise.resolve(state.viewer.loadSkin(state.skinURL,{model:state.model}))
-          .finally(()=>{state.detected=detectSlim()?'slim':'default';rebuildSegmentedRig();rebuildSecondLayerModel();applyRig();setStatus();});
+          .finally(()=>{state.detected=detectSlim()?'slim':'default';rebuildSegmentedRig();rebuildSecondLayerModel();refreshPartBindings();applyRig();setStatus();});
       }
       setStatus();
     });
@@ -1198,12 +1400,13 @@ function wire(){
     $$('.pane').forEach(p=>p.classList.toggle('on',p.dataset.pane===b.dataset.tab));
     // thumbnail live preview frame
     updateThumbFrame();
+    syncStageToolUI();
   });
 
   // toolbar
   $$('#toolbar [data-view]').forEach(b=>b.onclick=()=>withUndo(()=>setView(b.dataset.view)));
   $('#spinTool').onclick=()=>{ state.viewer.autoRotate=!state.viewer.autoRotate; $('#spinTool').classList.toggle('on',state.viewer.autoRotate); };
-  $('#resetView').onclick=()=>{ state.viewer.controls.reset(); state.viewer.zoom=0.82; };
+  $('#resetView').onclick=()=>recenterCamera(true);
   $('#resetPoseTool').onclick=()=>withUndo(resetPose);
   $('#undoTool').onclick=()=>void undoLastAdjustment();
 
@@ -1216,7 +1419,26 @@ function wire(){
   $('#poseGrid').addEventListener('click',e=>{const b=e.target.closest('.pose-btn');if(b)withUndo(()=>setPose(b.dataset.pose));});
 
   // rig accordions + sliders
-  $('#rig').addEventListener('click',e=>{const h=e.target.closest('.rig-head');if(h)h.parentElement.classList.toggle('open');});
+  $('#rig').addEventListener('click',e=>{
+    const visibilityBtn = e.target.closest('[data-part-action="toggle-visibility"]');
+    if(visibilityBtn){
+      const card = visibilityBtn.closest('.rig-part');
+      if(card) withUndo(()=>setPartVisibility([card.dataset.part], !isPartVisible(card.dataset.part)));
+      return;
+    }
+    const h=e.target.closest('.rig-head');
+    if(h){
+      const card = h.parentElement;
+      const partKey = card.dataset.part;
+      const wasOnlySelected = state.selectedParts.length === 1 && state.selectedParts[0] === partKey;
+      const nextOpen = wasOnlySelected ? !card.classList.contains('open') : true;
+      setSelectedParts([partKey]);
+      card.classList.toggle('open', nextOpen);
+    }
+  });
+  $('#clearSelectionBtn').onclick=()=>setSelectedParts([]);
+  $('#hideSelectedPartsBtn').onclick=()=>withUndo(()=>setPartVisibility(state.selectedParts, false));
+  $('#showAllPartsBtn').onclick=()=>withUndo(()=>setPartVisibility(PARTS.map(part=>part.key), true));
   PARTS.forEach(p=>['x','y','z'].forEach(ax=>{
     const inp=$(`#rig_${p.key}_${ax}`); if(!inp)return;
     inp.addEventListener('input',()=>{ clearAnim(); state.rig[p.key][ax]=+inp.value; inp.nextElementSibling.textContent=Math.round(+inp.value)+'°'; applyRig(); $$('#poseGrid .pose-btn').forEach(b=>b.classList.remove('on')); });
@@ -1342,6 +1564,7 @@ function wire(){
 
   window.addEventListener('resize',()=>updateThumbFrame());
   window.addEventListener('keydown', handleUndoKeydown);
+  initStageInteraction();
 }
 
 function applyFilterPreset(key){
@@ -1358,10 +1581,207 @@ function applyFilterPreset(key){
 function markCustomFilter(){ $$('#filterPresets .chip').forEach(c=>c.classList.remove('on')); }
 
 function setView(v){
-  const vw=state.viewer;
-  const yaw={front:0,three:-30,side:-90,back:180}[v]??0;
-  state.bodyYaw=yaw; $('#bodyYaw').value=yaw; $('#bodyYawV').textContent=yaw+'°';
-  applyRig(); vw.controls.reset(); vw.zoom=0.82;
+  setCameraView(v, true);
+}
+function isPosePaneActive(){
+  return !!$('.pane[data-pane="pose"]')?.classList.contains('on');
+}
+function selectionDragMode(partKeys){
+  return partKeys.length && partKeys.every(key=>LIMB_KEYS.has(key)) ? 'limb' : 'pivot';
+}
+function getPartFromObject(obj){
+  let node=obj;
+  while(node){
+    if(node.userData?.partKey) return node.userData.partKey;
+    node=node.parent;
+  }
+  return null;
+}
+function getPartAtPointer(evt){
+  const canvas=$('#viewer');
+  const skin=state.viewer?.playerObject?.skin;
+  if(!canvas || !skin) return null;
+  const rect=canvas.getBoundingClientRect();
+  stageSelection.pointer.set(
+    ((evt.clientX-rect.left)/rect.width)*2-1,
+    -((evt.clientY-rect.top)/rect.height)*2+1
+  );
+  stageSelection.raycaster.setFromCamera(stageSelection.pointer, state.viewer.camera);
+  const hits=stageSelection.raycaster.intersectObject(skin, true);
+  for(const hit of hits){
+    const key=getPartFromObject(hit.object);
+    if(key && isPartVisible(key)) return key;
+  }
+  return null;
+}
+function getProjectedPartCenter(partKey){
+  const canvas=$('#viewer');
+  const part=state.viewer?.playerObject?.skin?.[partKey];
+  if(!canvas || !part || !isPartVisible(partKey)) return null;
+  const rect=canvas.getBoundingClientRect();
+  stageSelection.worldBox.setFromObject(part);
+  if(stageSelection.worldBox.isEmpty()) return null;
+  stageSelection.worldBox.getCenter(stageSelection.worldPoint);
+  stageSelection.worldPoint.project(state.viewer.camera);
+  if(stageSelection.worldPoint.z < -1 || stageSelection.worldPoint.z > 1) return null;
+  return {
+    x:(stageSelection.worldPoint.x*0.5+0.5)*rect.width,
+    y:(-stageSelection.worldPoint.y*0.5+0.5)*rect.height,
+  };
+}
+function findPartsInMarquee(bounds){
+  return getVisiblePartKeys().filter(key=>{
+    const point=getProjectedPartCenter(key);
+    return point && point.x>=bounds.left && point.x<=bounds.right && point.y>=bounds.top && point.y<=bounds.bottom;
+  });
+}
+function marqueeBounds(drag, evt){
+  const canvas=$('#viewer');
+  const rect=canvas.getBoundingClientRect();
+  const startX=drag.startX-rect.left;
+  const startY=drag.startY-rect.top;
+  const endX=evt.clientX-rect.left;
+  const endY=evt.clientY-rect.top;
+  return {
+    left:Math.min(startX,endX),
+    top:Math.min(startY,endY),
+    right:Math.max(startX,endX),
+    bottom:Math.max(startY,endY),
+  };
+}
+function syncMarquee(bounds){
+  const marquee=$('#selectionMarquee');
+  if(!marquee || !bounds) return;
+  marquee.style.display='block';
+  marquee.style.left=`${bounds.left}px`;
+  marquee.style.top=`${bounds.top}px`;
+  marquee.style.width=`${Math.max(1, bounds.right-bounds.left)}px`;
+  marquee.style.height=`${Math.max(1, bounds.bottom-bounds.top)}px`;
+}
+function hideMarquee(){
+  const marquee=$('#selectionMarquee');
+  if(marquee) marquee.style.display='none';
+}
+function rotateSelectedParts(dx, dy){
+  if(!state.selectedParts.length) return;
+  clearAnim();
+  const mode=selectionDragMode(state.selectedParts);
+  for(const key of state.selectedParts){
+    state.rig[key].x = clamp(state.rig[key].x - dy*0.45, -180, 180);
+    if(mode === 'limb') state.rig[key].z = clamp(state.rig[key].z + dx*0.45, -180, 180);
+    else state.rig[key].y = clamp(state.rig[key].y + dx*0.45, -180, 180);
+  }
+  syncRigUI();
+  applyRig();
+  syncPoseButtons();
+}
+function initStageInteraction(){
+  const stage=$('#stage');
+  const frame=$('#canvasFrame');
+  const canvas=$('#viewer');
+  if(!stage || !frame || !canvas || $('#selectionMarquee')) return;
+
+  const control=document.createElement('div');
+  control.id='stageModeControl';
+  control.className='stage-mode-control';
+  control.innerHTML=`<button class="stage-mode-btn" type="button" data-stage-tool="drag" aria-label="Drag mode" title="Drag mode">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8.5 11.5V5.8a1.8 1.8 0 1 1 3.6 0v4.2V4.8a1.8 1.8 0 1 1 3.6 0v5.3-3.2a1.8 1.8 0 1 1 3.6 0v7.3c0 3.7-2.8 6.3-6.3 6.3h-.7c-2.7 0-4.6-1.2-5.9-3.4l-2.1-3.8a1.7 1.7 0 0 1 3-1.7l1.2 2.1v-2.2Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="stage-mode-btn" type="button" data-stage-tool="select" aria-label="Select mode" title="Select mode">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 3 13.5 8.4-5 1.3 2.5 5.8-2.8 1.2-2.4-5.8-4 3.4L4 3Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+    </button>`;
+  stage.appendChild(control);
+
+  const marquee=document.createElement('div');
+  marquee.id='selectionMarquee';
+  marquee.className='selection-marquee';
+  frame.appendChild(marquee);
+
+  const hint=document.createElement('div');
+  hint.id='stagePoseTip';
+  hint.className='stage-pose-tip';
+  frame.appendChild(hint);
+
+  control.addEventListener('click', evt=>{
+    const btn = evt.target.closest('[data-stage-tool]');
+    if(!btn) return;
+    setStageTool(btn.dataset.stageTool);
+  });
+
+  canvas.addEventListener('pointerdown', evt=>{
+    if(evt.button !== 0 || !state.hasSkin || !isPosePaneActive()) return;
+    if(state.stageTool === 'drag'){
+      canvas.style.cursor='grabbing';
+      return;
+    }
+    const hitPart=getPartAtPointer(evt);
+    beginUndoGesture();
+    state.viewer.controls.enabled=false;
+    canvas.setPointerCapture?.(evt.pointerId);
+    stageSelection.drag={
+      pointerId:evt.pointerId,
+      startX:evt.clientX,
+      startY:evt.clientY,
+      lastX:evt.clientX,
+      lastY:evt.clientY,
+      hitPart,
+      mode:hitPart ? 'part' : 'marquee',
+      didDrag:false,
+    };
+    evt.preventDefault();
+  });
+
+  canvas.addEventListener('pointermove', evt=>{
+    if(state.stageTool === 'drag') return;
+    const drag=stageSelection.drag;
+    if(!drag || drag.pointerId !== evt.pointerId) return;
+    const totalDx=evt.clientX-drag.startX;
+    const totalDy=evt.clientY-drag.startY;
+    const distance=Math.hypot(totalDx, totalDy);
+    if(distance >= STAGE_DRAG_THRESHOLD) drag.didDrag=true;
+
+    if(drag.mode === 'part' && drag.didDrag && drag.hitPart){
+      if(!state.selectedParts.includes(drag.hitPart)) setSelectedParts([drag.hitPart]);
+      rotateSelectedParts(evt.clientX-drag.lastX, evt.clientY-drag.lastY);
+    }else if(drag.mode === 'marquee' && drag.didDrag){
+      syncMarquee(marqueeBounds(drag, evt));
+    }
+
+    drag.lastX=evt.clientX;
+    drag.lastY=evt.clientY;
+    evt.preventDefault();
+  });
+
+  const finishPointer=evt=>{
+    if(state.stageTool === 'drag'){
+      canvas.style.cursor='grab';
+      return;
+    }
+    const drag=stageSelection.drag;
+    if(!drag || drag.pointerId !== evt.pointerId) return;
+    stageSelection.drag=null;
+    state.viewer.controls.enabled=true;
+    canvas.releasePointerCapture?.(evt.pointerId);
+
+    if(drag.mode === 'part'){
+      if(drag.hitPart && !drag.didDrag) setSelectedParts([drag.hitPart]);
+      commitUndoGesture();
+      hideMarquee();
+      return;
+    }
+
+    if(drag.didDrag){
+      setSelectedParts(findPartsInMarquee(marqueeBounds(drag, evt)));
+    }else{
+      setSelectedParts([]);
+    }
+    hideMarquee();
+    commitUndoGesture();
+  };
+
+  canvas.addEventListener('pointerup', finishPointer);
+  canvas.addEventListener('pointercancel', finishPointer);
+  syncStageToolUI();
 }
 function updateThumbFrame(){
   const show = state.thumb.on && $('.pane[data-pane="thumb"]').classList.contains('on');

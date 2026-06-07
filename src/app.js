@@ -8,6 +8,7 @@ const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const D2R = Math.PI/180, R2D = 180/Math.PI;
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const CONTROL_ACTION_PAN = 2;
 
 /* ---- procedural grain texture (used in CSS + export) ---- */
 const grainURL = (()=>{
@@ -21,6 +22,7 @@ const grainImg = new Image(); grainImg.src = grainURL;
 
 /* ---- safe storage (degrades gracefully in sandboxes) ---- */
 const store = (()=>{ try{const k='__bp_test';localStorage.setItem(k,'1');localStorage.removeItem(k);return localStorage;}catch(e){return null;} })();
+const DEFAULT_MODEL_ZOOM = 0.5;
 
 /* ===================== STATE ===================== */
 const PARTS = [
@@ -232,14 +234,16 @@ function initViewer(){
   const cv = $('#viewer');
   state.viewer = new skinview3d.SkinViewer({
     canvas: cv, width:1320, height:1680,
-    zoom:0.82, fov:42, background:null,
+    zoom:DEFAULT_MODEL_ZOOM, fov:42, background:null,
     preserveDrawingBuffer:true, enableControls:true
   });
   const v=state.viewer;
-  v.controls.enableZoom=true; v.controls.enablePan=false;
+  v.controls.enableZoom=true; v.controls.enablePan=true;
+  if(v.controls.mouseButtons) v.controls.mouseButtons.RIGHT = CONTROL_ACTION_PAN;
   v.autoRotateSpeed=2.2;
   applyRendererExposure(v);
   applyLights();
+  setCameraView('front', true);
   // keep manual rig applied every frame after animation clears
   const tick=()=>{ if(!state.anim && state.hasSkin) applyRig(); requestAnimationFrame(tick); };
   requestAnimationFrame(tick);
@@ -331,6 +335,54 @@ function applyRig(){
   }
   v.playerWrapper.rotation.y = state.bodyYaw*D2R;
   v.playerWrapper.rotation.x = state.bodyPitch*D2R;
+}
+function getDefaultCameraDistance(vw){
+  const min = vw.controls?.minDistance ?? 10;
+  const max = vw.controls?.maxDistance ?? 256;
+  const raw = 4.5 + 16.5 / Math.tan((vw.fov * D2R) / 2) / DEFAULT_MODEL_ZOOM;
+  return clamp(raw, min, max);
+}
+function getCameraFocus(vw){
+  const seed = vw.camera.position.clone();
+  const root = seed.clone();
+  const body = seed.clone();
+  const head = seed.clone();
+  vw.playerObject.updateMatrixWorld?.(true);
+  vw.playerObject.getWorldPosition(root);
+  vw.playerObject.skin.body.getWorldPosition(body);
+  vw.playerObject.skin.head.getWorldPosition(head);
+  return {
+    x: root.x,
+    y: body.y + (head.y - body.y) * 0.45,
+    z: root.z,
+  };
+}
+function positionCamera(angle, saveState=false){
+  const vw=state.viewer; if(!vw) return;
+  const focus=getCameraFocus(vw);
+  const dist=getDefaultCameraDistance(vw);
+  const rad=angle*D2R;
+  vw.zoom=DEFAULT_MODEL_ZOOM;
+  vw.controls.target.set(focus.x, focus.y, focus.z);
+  vw.camera.position.set(
+    focus.x + Math.sin(rad) * dist,
+    focus.y,
+    focus.z + Math.cos(rad) * dist
+  );
+  vw.camera.lookAt(vw.controls.target);
+  vw.controls.update();
+  if(saveState && typeof vw.controls.saveState === 'function') vw.controls.saveState();
+}
+function setCameraView(view='front', saveState=false){
+  const angle={front:0,three:30,side:90,back:180}[view] ?? 0;
+  positionCamera(angle, saveState);
+}
+function recenterCamera(saveState=false){
+  const vw=state.viewer; if(!vw) return;
+  const dx=vw.camera.position.x - vw.controls.target.x;
+  const dz=vw.camera.position.z - vw.controls.target.z;
+  const angle=Number.isFinite(dx) && Number.isFinite(dz) ? Math.atan2(dx, dz) * R2D : 0;
+  positionCamera(angle, saveState);
 }
 function setPose(key){
   const p=POSES[key]; if(!p) return;
@@ -532,6 +584,7 @@ async function restoreSnapshot(snapshot){
     }
     if(next.anim) setAnim(next.anim);
     applyRig();
+    state.viewer.zoom = DEFAULT_MODEL_ZOOM;
     applyAll();
     applyCape();
     syncUndoableUI();
@@ -887,7 +940,7 @@ function wire(){
   // toolbar
   $$('#toolbar [data-view]').forEach(b=>b.onclick=()=>withUndo(()=>setView(b.dataset.view)));
   $('#spinTool').onclick=()=>{ state.viewer.autoRotate=!state.viewer.autoRotate; $('#spinTool').classList.toggle('on',state.viewer.autoRotate); };
-  $('#resetView').onclick=()=>{ state.viewer.controls.reset(); state.viewer.zoom=0.82; };
+  $('#resetView').onclick=()=>recenterCamera(true);
   $('#resetPoseTool').onclick=()=>withUndo(resetPose);
   $('#undoTool').onclick=()=>void undoLastAdjustment();
 
@@ -1025,10 +1078,7 @@ function applyFilterPreset(key){
 function markCustomFilter(){ $$('#filterPresets .chip').forEach(c=>c.classList.remove('on')); }
 
 function setView(v){
-  const vw=state.viewer;
-  const yaw={front:0,three:-30,side:-90,back:180}[v]??0;
-  state.bodyYaw=yaw; $('#bodyYaw').value=yaw; $('#bodyYawV').textContent=yaw+'°';
-  applyRig(); vw.controls.reset(); vw.zoom=0.82;
+  setCameraView(v, true);
 }
 function updateThumbFrame(){
   const show = state.thumb.on && $('.pane[data-pane="thumb"]').classList.contains('on');
