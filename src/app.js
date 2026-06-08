@@ -48,6 +48,7 @@ const state = {
   filters:{brightness:100,contrast:100,saturate:100,hue:0,sepia:0,grayscale:0,blur:0,vignette:0,grain:0},
   tint:{color:'#ff9d3c',amt:0},
   bg:{mode:'transparent', solid:'#1c1810', g1:'#f6a623', g2:'#1c1810', gAngle:180, chroma:'#00b140', img:null, fit:'cover'},
+  shader:'vanilla',
   amb:160, key:90, exposure:Math.round(LIGHTING.exposureDefault*100), layerEmissive:LIGHTING.layerEmissiveDefault, cape:false, capeURL:null, elytra:false,
   thumb:{on:false,title:'',sub:'',font:84,col:'#ffffff',out:'#16130d',outW:10,align:'left',mx:72,ms:100},
   exp:{fmt:'png-trans', aspect:'portrait', res:'2k'},
@@ -116,6 +117,102 @@ const FILTER_SLIDERS = [
   {k:'grain',     name:'Film grain', min:0, max:60, unit:'%'},
 ];
 
+/* ===================== SHADER PRESETS ===================== */
+// Each shader configures the THREE.js renderer (toneMapping, exposure)
+// and material properties (roughness, metalness, emissiveIntensity)
+// plus a subtle CSS filter tweak for the canvas output.
+// toneMapping values: 0=None, 1=Linear, 2=Reinhard, 3=OptimizedCineon, 4=ACESFilmic
+const SHADERS = {
+  vanilla: {
+    label:'Vanilla',
+    icon:'🌿',
+    desc:'Default Minecraft look',
+    toneMapping:0,
+    exposure:92,
+    amb:160, key:90,
+    roughness:0.62, metalness:0,
+    emissive:0.08,
+    canvasFilter:'none',
+  },
+  bsl: {
+    label:'BSL',
+    icon:'🌅',
+    desc:'Warm tones, cinematic',
+    toneMapping:4,   // ACESFilmic
+    exposure:105,
+    amb:148, key:110,
+    roughness:0.50, metalness:0.02,
+    emissive:0.12,
+    canvasFilter:'brightness(108%) saturate(118%) contrast(106%)',
+  },
+  complementary: {
+    label:'Complementary',
+    icon:'✨',
+    desc:'Vibrant, punchy colors',
+    toneMapping:4,   // ACESFilmic
+    exposure:110,
+    amb:155, key:120,
+    roughness:0.44, metalness:0.02,
+    emissive:0.14,
+    canvasFilter:'brightness(110%) saturate(132%) contrast(112%)',
+  },
+  seus: {
+    label:'SEUS',
+    icon:'🌟',
+    desc:'Realistic, high contrast',
+    toneMapping:3,   // OptimizedCineon
+    exposure:118,
+    amb:130, key:140,
+    roughness:0.38, metalness:0.04,
+    emissive:0.06,
+    canvasFilter:'brightness(114%) contrast(122%) saturate(108%)',
+  },
+  sildurs: {
+    label:"Sildur's",
+    icon:'🌈',
+    desc:'Dreamy, vivid saturation',
+    toneMapping:2,   // Reinhard
+    exposure:100,
+    amb:165, key:100,
+    roughness:0.56, metalness:0,
+    emissive:0.18,
+    canvasFilter:'brightness(106%) saturate(148%) hue-rotate(4deg)',
+  },
+  noir: {
+    label:'Noir',
+    icon:'🎬',
+    desc:'Black & white, cinematic',
+    toneMapping:4,   // ACESFilmic
+    exposure:108,
+    amb:140, key:160,
+    roughness:0.30, metalness:0.08,
+    emissive:0.04,
+    canvasFilter:'grayscale(100%) brightness(110%) contrast(130%)',
+  },
+  retro: {
+    label:'Retro',
+    icon:'📺',
+    desc:'Warm sepia, old-school',
+    toneMapping:2,   // Reinhard
+    exposure:98,
+    amb:145, key:88,
+    roughness:0.70, metalness:0,
+    emissive:0.10,
+    canvasFilter:'sepia(52%) brightness(104%) contrast(96%) saturate(88%)',
+  },
+  neon: {
+    label:'Neon',
+    icon:'💜',
+    desc:'Cyberpunk, electric hues',
+    toneMapping:1,   // Linear
+    exposure:120,
+    amb:170, key:80,
+    roughness:0.28, metalness:0.12,
+    emissive:0.22,
+    canvasFilter:'brightness(105%) saturate(180%) contrast(118%) hue-rotate(260deg)',
+  },
+};
+
 /* ===================== BACKGROUND MODES ===================== */
 const BG_MODES=[
   {id:'transparent',name:'None', sw:'repeating-conic-gradient(#5a5040 0% 25%, #3a3328 0% 50%) 50%/12px 12px'},
@@ -169,6 +266,7 @@ function snapshotState(){
       imgSrc: state.bg.img?.src || null,
       fit: state.bg.fit,
     },
+    shader: state.shader,
     amb: state.amb,
     key: state.key,
     exposure: state.exposure,
@@ -281,6 +379,7 @@ async function applySkin(url, label){
   }catch(e){ /* loadSkin returns void for canvas src; ignore */ }
   state.detected = detectSlim() ? 'slim':'default';
   syncSkinMaterialLighting();
+  applyShader(state.shader);
   hideLoad();
   setStatus(label||'Custom skin');
   applyRig();
@@ -490,6 +589,7 @@ function syncFiltersUI(){
   syncFilterPresetButtons();
 }
 function syncSceneUI(){
+  syncShaderUI();
   $('#ambLight').value = state.amb;
   $('#ambLightV').textContent = Math.round(state.amb) + '%';
   $('#keyLight').value = state.key;
@@ -566,6 +666,7 @@ async function restoreSnapshot(snapshot){
       img.src = next.bg.imgSrc;
       state.bg.img = img;
     }
+    state.shader = next.shader || 'vanilla';
     state.amb = next.amb;
     state.key = next.key;
     state.exposure = next.exposure;
@@ -612,7 +713,7 @@ function filterCSS(f){
 }
 function applyFilters(){
   const f=state.filters;
-  $('#viewer').style.filter = filterCSS(f);
+  _applyComposedFilter();
   const vg=$('#vignetteLayer');
   vg.style.opacity = f.vignette/60;
   vg.style.background = `radial-gradient(70% 70% at 50% 45%, transparent 40%, rgba(0,0,0,.9) 120%)`;
@@ -650,6 +751,75 @@ function applyRendererExposure(v){
     v.renderer.toneMappingExposure = state.exposure/100;
   }
 }
+
+/* ===================== SHADER SYSTEM ===================== */
+function applyShader(key){
+  const sh = SHADERS[key]; if(!sh) return;
+  state.shader = key;
+  const v = state.viewer; if(!v) return;
+  // update description label
+  const descEl = $('#shaderDesc');
+  if(descEl) descEl.textContent = sh.desc + (sh.toneMapping > 0 ? ' · ' + ['','Linear','Reinhard','Cineon','ACES'][sh.toneMapping] + ' tone mapping' : '');
+  // tone mapping & exposure on renderer
+  if(v.renderer){
+    v.renderer.toneMapping = sh.toneMapping;
+    v.renderer.toneMappingExposure = sh.exposure/100;
+  }
+  // lighting
+  v.globalLight.intensity = sh.amb/100 * LIGHTING.ambientScale;
+  v.cameraLight.intensity = sh.key/100 * LIGHTING.keyScale;
+  // material overrides
+  const skin = v.playerObject?.skin;
+  if(skin){
+    [
+      skin.layer1Material, skin.layer1MaterialBiased,
+      skin.layer2Material, skin.layer2MaterialBiased,
+    ].forEach(mat=>{
+      if(!mat) return;
+      mat.roughness = sh.roughness;
+      mat.metalness = sh.metalness;
+      mat.emissiveIntensity = sh.emissive;
+      mat.needsUpdate = true;
+    });
+  }
+  // canvas CSS filter overlay for shader look (separate from user filters)
+  let sl = $('#shaderLayer');
+  if(!sl){
+    sl = document.createElement('div');
+    sl.id = 'shaderLayer';
+    sl.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:1;border-radius:6px;mix-blend-mode:normal;transition:opacity 0.3s';
+    const frame = $('#canvasFrame');
+    if(frame) frame.appendChild(sl);
+  }
+  if(sh.canvasFilter === 'none'){
+    sl.style.opacity = '0';
+    sl.style.background = 'transparent';
+    $('#viewer').style.setProperty('--shader-filter','none');
+    applyShaderCanvasFilter('none');
+  } else {
+    sl.style.opacity = '0';
+    applyShaderCanvasFilter(sh.canvasFilter);
+  }
+  // sync lighting state back but don't double-apply through applyLights
+  state.amb = sh.amb; state.key = sh.key; state.exposure = sh.exposure;
+  state.layerEmissive = sh.emissive;
+}
+
+// Apply shader filter to viewer canvas (separate from user Filters)
+let _shaderFilterCurrent = 'none';
+function applyShaderCanvasFilter(f){
+  _shaderFilterCurrent = f;
+  _applyComposedFilter();
+}
+function _applyComposedFilter(){
+  // compose shader filter with user filter
+  const userF = filterCSS(state.filters);
+  $('#viewer').style.filter = _shaderFilterCurrent === 'none' ? userF : _shaderFilterCurrent + ' ' + userF;
+}
+
+function syncShaderUI(){
+  $$('#shaderChips .shader-chip').forEach(c=>c.classList.toggle('on', c.dataset.shader === state.shader));
+}
 function applyCape(){
   const v=state.viewer; if(!v) return;
   const url = state.capeURL || 'https://crafatar.com/capes/MHF_Steve';
@@ -657,7 +827,7 @@ function applyCape(){
     try{ v.loadCape(url, {backEquipment: state.elytra?'elytra':'cape'}); }catch(e){}
   } else { v.loadCape(null); }
 }
-function applyAll(){ applyFilters(); applyBg(); applyLights(); }
+function applyAll(){ applyFilters(); applyBg(); applyLights(); applyShader(state.shader); }
 
 /* ===================== EXPORT PIPELINE ===================== */
 function captureModel(W,H){
@@ -863,6 +1033,11 @@ function renderLib(){
 
 /* ===================== UI BUILDERS ===================== */
 function buildUI(){
+  // shader presets
+  const shaderEl = $('#shaderChips');
+  if(shaderEl) shaderEl.innerHTML = Object.entries(SHADERS).map(([k,s])=>
+    `<button class="shader-chip chip${k==='vanilla'?' on':''}" data-shader="${k}" title="${s.desc}"><span class="ic">${s.icon}</span>${s.label}</button>`
+  ).join('');
   // animations
   $('#animChips').innerHTML = ANIMS.map(a=>`<button class="chip" data-anim="${a.id}"><span class="ic">${a.ic}</span>${a.name}</button>`).join('');
   // poses
@@ -1008,6 +1183,13 @@ function wire(){
   $('#bgUpload').onclick=()=>$('#fileBg').click();
   $('#fileBg').onchange=e=>{const f=e.target.files[0];if(!f)return;const im=new Image();im.onload=()=>{withUndo(()=>{state.bg.img=im;applyBg();});};im.src=fileToURL(f);};
   $('#bgFit').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;withUndo(()=>{$$('#bgFit button').forEach(x=>x.classList.toggle('on',x===b));state.bg.fit=b.dataset.fit;applyBg();});});
+
+  // shaders
+  const shaderChipsEl = $('#shaderChips');
+  if(shaderChipsEl) shaderChipsEl.addEventListener('click',e=>{
+    const b=e.target.closest('.shader-chip'); if(!b) return;
+    withUndo(()=>{ applyShader(b.dataset.shader); syncShaderUI(); });
+  });
 
   // lights
   bindRange('#ambLight','#ambLightV',v=>{state.amb=+v;applyLights();},v=>Math.round(v)+'%');

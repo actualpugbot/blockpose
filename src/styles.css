@@ -364,6 +364,20 @@ textarea.title-in:focus,input.title-in:focus{border-color:var(--brand);box-shado
   .src-bar .seg span{display:none}
 }
 
+
+/* ============ SHADER CHIPS ============ */
+.shader-chip{
+  flex:1 1 calc(50% - 4px);min-width:0;justify-content:flex-start;
+  padding:9px 11px;gap:8px;
+}
+.shader-chip .ic{font-size:16px;flex:0 0 auto}
+.shader-chip.on{
+  border-color:var(--brand-b);
+  background:color-mix(in srgb, var(--brand-b) 14%, var(--panel));
+  color:var(--brand-b);
+  box-shadow:0 0 0 1px color-mix(in srgb, var(--brand-b) 35%, transparent);
+}
+
 @media (max-width:640px){
   body{overflow:auto}
   .app{height:auto;min-height:100vh}

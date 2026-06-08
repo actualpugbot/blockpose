@@ -126,6 +126,11 @@ const studioMarkup = `<div class="app">
         <!-- SCENE -->
         <div class="pane" data-pane="scene">
           <div class="group">
+            <div class="group-h"><h4>Shader Pack</h4><div class="hr"></div><span class="tag">Renderer</span></div>
+            <div class="chips" id="shaderChips"></div>
+            <p class="note" id="shaderDesc" style="margin-top:8px;font-size:11.5px;color:var(--muted)">Default Minecraft look — no post-processing.</p>
+          </div>
+          <div class="group">
             <div class="group-h"><h4>Background</h4><div class="hr"></div><span class="tag">Export-baked</span></div>
             <div class="bg-modes" id="bgModes"></div>
             <div id="bgSolid" class="bg-extra"><div class="color-row"><label>Color</label><span class="hexlbl" id="bgSolidHex">#1c1810</span><div class="swatch"><input type="color" id="bgSolidColor" value="#1c1810"></div></div></div>
