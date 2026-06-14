@@ -47,13 +47,14 @@ blockpose/
 ## Features
 
 - 3D posable Minecraft skin model powered by `skinview3d` and `three`
-- Username/UUID skin loading plus local PNG upload
+- Username/UUID skin loading plus local PNG upload (remembers your last-loaded skin)
 - Classic/slim model detection with manual override
 - Live animations, static pose presets, and manual per-limb rig controls
+- Bendable elbows and knees with auto-generated joint connectors
 - Pose save/import/export as JSON
 - Filter presets, manual color grading, tint, vignette, and grain
-- Transparent, solid, gradient, chroma-key, or image backgrounds
-- Lighting controls plus cape/elytra toggles
+- Shader pack presets plus transparent, solid, gradient, chroma-key, or image backgrounds
+- Studio lighting and render-layer controls
 - YouTube thumbnail composer with model placement and outlined text
 - PNG/JPG export up to 4K, including clipboard copy
 

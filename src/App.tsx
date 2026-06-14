@@ -91,6 +91,7 @@ const studioMarkup = `<div class="app">
           </div>
           <div class="group">
             <div class="group-h"><h4>Manual Rig</h4><div class="hr"></div><span class="tag">Degrees</span></div>
+            <button class="rig-action show-all-row" id="showAllPartsBtn" type="button" style="display:none">Show all hidden parts</button>
             <div id="rig"></div>
             <div class="row" style="margin-top:6px"><div class="rl">Body turn</div><div class="slider"><input type="range" id="bodyYaw" min="-180" max="180" step="1" value="0"><span class="val" id="bodyYawV">0°</span></div></div>
             <div class="row"><div class="rl">Body tilt</div><div class="slider"><input type="range" id="bodyPitch" min="-90" max="90" step="1" value="0"><span class="val" id="bodyPitchV">0°</span></div></div>
@@ -158,14 +159,6 @@ const studioMarkup = `<div class="app">
             <div class="group-h"><h4>Render Options</h4><div class="hr"></div><span class="tag">Model</span></div>
             <div class="row"><div class="rl">Skin layer</div><div class="seg skin-layer-seg" id="skinLayerMode" style="flex:1"><button class="on" data-layer="3d">3D</button><button data-layer="flat">Flat</button><button data-layer="off">Off</button></div></div>
             <div class="row"><div class="rl">Layer depth</div><div class="slider"><input type="range" id="skinLayerDepth" min="0.2" max="1" step="0.05" value="0.55"><span class="val" id="skinLayerDepthV">0.55</span></div></div>
-          </div>
-          <div class="group">
-            <div class="group-h"><h4>Extras</h4><div class="hr"></div><span class="tag">Equip</span></div>
-            <div class="chips">
-              <button class="chip" id="capeToggle"><span class="ic">🧣</span>Add cape</button>
-              <button class="chip" id="elytraToggle"><span class="ic">🪽</span>Elytra</button>
-            </div>
-            <p class="note">Loads the player's own cape when available (from username/UUID), or a default for uploads.</p>
           </div>
         </div>
 

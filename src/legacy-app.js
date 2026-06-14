@@ -26,6 +26,12 @@ const grainImg = new Image(); grainImg.src = grainURL;
 /* ---- safe storage (degrades gracefully in sandboxes) ---- */
 const store = (()=>{ try{const k='__bp_test';localStorage.setItem(k,'1');localStorage.removeItem(k);return localStorage;}catch(e){return null;} })();
 const DEFAULT_MODEL_ZOOM = 0.5;
+const DEFAULT_SKIN_NAME = 'actualPUG';
+
+/* ---- remember the last skin loaded, restore it on the next visit ---- */
+const LAST_SKIN_KEY = 'bp_last_skin';
+function rememberSkin(info){ try{ store?.setItem(LAST_SKIN_KEY, JSON.stringify(info)); }catch(e){} }
+function loadRememberedSkin(){ try{ return JSON.parse(store?.getItem(LAST_SKIN_KEY) || 'null'); }catch(e){ return null; } }
 
 /* ===================== STATE ===================== */
 const PARTS = [
@@ -40,6 +46,9 @@ const ZERO = ()=>PARTS.reduce((o,p)=>(o[p.key]={x:0,y:0,z:0},o),{});
 const ALL_VISIBLE = ()=>PARTS.reduce((o,p)=>(o[p.key]=true,o),{});
 const PART_KEY_SET = new Set(PARTS.map(p=>p.key));
 const LIMB_KEYS = new Set(['rightArm','leftArm','rightLeg','leftLeg']);
+// Left/right limbs are mirrored, so the same local roll swings them in opposite
+// world directions. These signs let a multi-part drag swing them together.
+const LIMB_SIDE_SIGN = {rightArm:1, leftArm:-1, rightLeg:1, leftLeg:-1};
 const JOINTS = [
   {key:'rightElbow', name:'Right elbow', part:'rightArm'},
   {key:'leftElbow',  name:'Left elbow',  part:'leftArm'},
@@ -103,6 +112,8 @@ const SECOND_LAYER_FACES = [
 ];
 let secondLayerModel = null;
 let segmentedRig = null;
+let selectionOutlines = [];
+const SELECTION_OUTLINE_COLOR = 0x2f74e0;
 
 /* ===================== ANIMATIONS ===================== */
 const ANIMS = [
@@ -117,19 +128,21 @@ const ANIMS = [
 /* ===================== STATIC POSES (radians) ===================== */
 // convention: arms/legs hang down at 0; +z swings limb outward to its side;
 // +x swings limb backward, -x swings forward; head.y looks, head.x nods.
+// Static poses keep elbows and knees straight (0° bend) so the model stays in
+// its clean 3D-layer form. Bending only happens via the manual joint sliders.
 const POSES = {
   rest:    {label:'Standing', svg:poseSVG('rest'), rig:ZERO(), yaw:0,pitch:0},
   tpose:   {label:'T-Pose',  svg:poseSVG('tpose'), rig:withRig({leftArm:{z:90},rightArm:{z:-90}})},
-  walk:    {label:'Walking', svg:poseSVG('walk'), rig:withRig({leftLeg:{x:-26},rightLeg:{x:26},leftArm:{x:24},rightArm:{x:-24}}), joints:withJoints({leftKnee:{x:18},rightElbow:{x:-12},leftElbow:{x:12}})},
-  run:     {label:'Running', svg:poseSVG('run'), rig:withRig({leftLeg:{x:-50},rightLeg:{x:50},leftArm:{x:55},rightArm:{x:-55},body:{x:14}}), joints:withJoints({leftKnee:{x:34},rightKnee:{x:18},leftElbow:{x:28},rightElbow:{x:-34}}), pitch:0},
-  wave:    {label:'Waving',  svg:poseSVG('wave'), rig:withRig({rightArm:{z:-142,x:6},head:{y:-8}}), joints:withJoints({rightElbow:{x:-44}})},
-  point:   {label:'Pointing',svg:poseSVG('point'),rig:withRig({rightArm:{x:-92},head:{y:-14}}), joints:withJoints({rightElbow:{x:-8}})},
-  cross:   {label:'Arms x',  svg:poseSVG('cross'),rig:withRig({rightArm:{z:-78,x:-16},leftArm:{z:78,x:-16}}), joints:withJoints({rightElbow:{y:58},leftElbow:{y:-58}})},
-  cheer:   {label:'Cheer',   svg:poseSVG('cheer'),rig:withRig({leftArm:{z:152},rightArm:{z:-152},head:{x:-8}}), joints:withJoints({leftElbow:{x:-18},rightElbow:{x:-18}})},
-  sit:     {label:'Sitting', svg:poseSVG('sit'),  rig:withRig({leftLeg:{x:-90},rightLeg:{x:-90},leftArm:{x:-16},rightArm:{x:-16}}), joints:withJoints({leftKnee:{x:82},rightKnee:{x:82},leftElbow:{x:-10},rightElbow:{x:-10}})},
+  walk:    {label:'Walking', svg:poseSVG('walk'), rig:withRig({leftLeg:{x:-26},rightLeg:{x:26},leftArm:{x:24},rightArm:{x:-24}})},
+  run:     {label:'Running', svg:poseSVG('run'), rig:withRig({leftLeg:{x:-50},rightLeg:{x:50},leftArm:{x:55},rightArm:{x:-55},body:{x:14}}), pitch:0},
+  wave:    {label:'Waving',  svg:poseSVG('wave'), rig:withRig({rightArm:{z:-142,x:6},head:{y:-8}})},
+  point:   {label:'Pointing',svg:poseSVG('point'),rig:withRig({rightArm:{x:-92},head:{y:-14}})},
+  cross:   {label:'Arms x',  svg:poseSVG('cross'),rig:withRig({rightArm:{z:-78,x:-16},leftArm:{z:78,x:-16}})},
+  cheer:   {label:'Cheer',   svg:poseSVG('cheer'),rig:withRig({leftArm:{z:152},rightArm:{z:-152},head:{x:-8}})},
+  sit:     {label:'Sitting', svg:poseSVG('sit'),  rig:withRig({leftLeg:{x:-90},rightLeg:{x:-90},leftArm:{x:-16},rightArm:{x:-16}})},
   sneak:   {label:'Sneak',   svg:poseSVG('sneak'),rig:withRig({body:{x:24},head:{x:-22},leftArm:{x:18},rightArm:{x:18}})},
-  hero:    {label:'Landing', svg:poseSVG('hero'), rig:withRig({rightLeg:{x:-64},leftLeg:{x:30},body:{x:18},rightArm:{x:-78},leftArm:{z:60,x:30},head:{x:18}}), joints:withJoints({rightKnee:{x:74},leftKnee:{x:28},rightElbow:{x:-22},leftElbow:{x:24}})},
-  fight:   {label:'Fighter', svg:poseSVG('fight'),rig:withRig({leftLeg:{z:14,x:-14},rightLeg:{z:-14,x:14},leftArm:{x:-46,z:18},rightArm:{x:-58,z:-12},body:{y:-12}}), joints:withJoints({leftKnee:{x:18},rightKnee:{x:32},leftElbow:{x:54},rightElbow:{x:46}})},
+  hero:    {label:'Landing', svg:poseSVG('hero'), rig:withRig({rightLeg:{x:-64},leftLeg:{x:30},body:{x:18},rightArm:{x:-78},leftArm:{z:60,x:30},head:{x:18}})},
+  fight:   {label:'Fighter', svg:poseSVG('fight'),rig:withRig({leftLeg:{z:14,x:-14},rightLeg:{z:-14,x:14},leftArm:{x:-46,z:18},rightArm:{x:-58,z:-12},body:{y:-12}})},
 };
 function withRig(parts){ const r=ZERO(); for(const k in parts){ Object.assign(r[k], parts[k]); } return r; }
 function withJoints(joints){ const r=ZERO_JOINTS(); for(const k in joints){ Object.assign(r[k], joints[k]); } return r; }
@@ -286,8 +299,31 @@ function boot(){
   wire();
   applyAll();
   updateUndoUI();
-  // default skin so the studio never looks empty
-  loadByName('actualPUG', true);
+  bootSkin();
+}
+// Restore the last skin the visitor loaded, or fall back to a default so the
+// studio never opens empty.
+function bootSkin(){
+  const saved=loadRememberedSkin();
+  const selectSource=src=>{
+    state.curSrc=src;
+    $$('#srcSeg button').forEach(x=>x.classList.toggle('on', x.dataset.src===src));
+    $('#nameField').style.display=src==='name'?'flex':'none';
+    $('#uploadField').style.display=src==='upload'?'flex':'none';
+  };
+  if(saved?.type==='upload' && typeof saved.value==='string'){
+    selectSource('upload');
+    if(saved.label) $('#uploadName').value=saved.label;
+    applySkin(saved.value, saved.label||'Custom skin');
+    return;
+  }
+  if(saved?.type==='name' && saved.value){
+    selectSource('name');
+    $('#nameInput').value=saved.value;
+    loadByName(saved.value, true);
+    return;
+  }
+  loadByName(DEFAULT_SKIN_NAME, true);
 }
 
 function cloneData(value){
@@ -417,7 +453,21 @@ async function loadByName(name, silent){
   }
   if(!blobURL){ hideLoad(); return toast('Could not fetch "'+name+'". Check the name.', true); }
   await applySkin(blobURL, name);
+  rememberSkin({type:'name', value:name});
   if(!silent) toast('Loaded '+name);
+}
+function handleSkinFile(file){
+  if(!file) return;
+  const label=file.name.replace(/\.[^.]+$/,'');
+  const reader=new FileReader();
+  reader.onload=()=>{
+    const dataURL=reader.result;
+    $('#uploadName').value=file.name;
+    applySkin(dataURL, label);
+    rememberSkin({type:'upload', value:dataURL, label});
+    toast('Skin loaded');
+  };
+  reader.readAsDataURL(file);
 }
 async function applySkin(url, label){
   state.skinURL=url; state.hasSkin=true;
@@ -543,6 +593,60 @@ function refreshPartBindings(){
   applyPartVisibility();
   syncPartSelectionUI();
 }
+/* ---- selection outline: a faint stroke around each selected part ---- */
+function clearSelectionOutline(){
+  selectionOutlines.forEach(mesh=>{
+    mesh.parent?.remove(mesh);
+    mesh.geometry.dispose();
+    mesh.material.dispose();
+  });
+  selectionOutlines = [];
+}
+// Slight margin (skin units): clears the outer/overlay layer so the stroke
+// reads as a hairline around the part rather than a thick halo.
+const SELECTION_OUTLINE_MARGIN = 1.2;
+function addOutlineBox(parent, w, h, d, pos, key){
+  const geometry = new THREE.BoxGeometry(w, h, d);
+  const material = new THREE.MeshBasicMaterial({
+    color: SELECTION_OUTLINE_COLOR,
+    side: THREE.BackSide,
+    transparent: true,
+    opacity: 0.85,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = `${key}SelectionOutline`;
+  mesh.position.copy(pos);
+  mesh.renderOrder = 999;
+  parent.add(mesh);
+  selectionOutlines.push(mesh);
+}
+const ZERO_VEC = new THREE.Vector3();
+function updateSelectionOutline(){
+  clearSelectionOutline();
+  const skin = state.viewer?.playerObject?.skin;
+  if(!skin || !state.selectedParts.length) return;
+  const m = SELECTION_OUTLINE_MARGIN;
+  for(const key of state.selectedParts){
+    // Parent the base outline to the inner mesh so it inherits the mesh's
+    // transform and visibility — when a bend hides the inner layer, the outline
+    // hides with it automatically.
+    const inner = skin[key]?.innerLayer;
+    const dims = inner?.geometry?.parameters;
+    if(inner && dims){
+      addOutlineBox(inner, dims.width + m, dims.height + m, dims.depth + m, ZERO_VEC, key);
+    }
+    // Segmented limbs also outline the bend segments; these live under the bend
+    // rig root, which is only visible while the joint is bent.
+    const cfg = SEGMENTED_LIMBS[key];
+    const seg = segmentedRig?.parts?.[key];
+    if(cfg && seg){
+      const w = valueOf(cfg.width) + m;
+      addOutlineBox(seg.upper, w, 6 + m, 4 + m, new THREE.Vector3(valueOf(cfg.pivotX), cfg.upperY, 0), key);
+      addOutlineBox(seg.lower, w, 6 + m, 4 + m, new THREE.Vector3(0, cfg.lowerY, 0), key);
+    }
+  }
+}
 function syncPartSelectionUI(){
   const cards = $$('#rig .rig-part');
   if(!cards.length) return;
@@ -561,24 +665,17 @@ function syncPartSelectionUI(){
     }
   });
 
-  const summary = $('#rigSelectionSummary');
-  if(summary){
-    if(!state.selectedParts.length){
-      summary.textContent = 'Click a part to select it, drag empty space to box-select, then drag a selected part to pose it.';
-    }else if(state.selectedParts.length === 1){
-      const part = PARTS.find(entry=>entry.key === state.selectedParts[0]);
-      summary.textContent = `${part?.name || '1 part'} selected. Drag it in the viewer to rotate it, or hide it from the eye control.`;
-    }else{
-      summary.textContent = `${state.selectedParts.length} parts selected. Drag any selected part to rotate them together.`;
-    }
-  }
+  // Clear / Hide selected only matter when more than one part is selected.
+  const multiSelected = state.selectedParts.length > 1;
+  const tools = $('#rigTools');
+  if(tools) tools.style.display = multiSelected ? 'flex' : 'none';
 
-  const clearBtn = $('#clearSelectionBtn');
-  if(clearBtn) clearBtn.disabled = state.selectedParts.length === 0;
-  const hideBtn = $('#hideSelectedPartsBtn');
-  if(hideBtn) hideBtn.disabled = state.selectedParts.length === 0;
+  // Show all only appears when multiple parts are hidden.
+  const hiddenCount = PARTS.filter(part=>!isPartVisible(part.key)).length;
   const showAllBtn = $('#showAllPartsBtn');
-  if(showAllBtn) showAllBtn.disabled = allPartsVisible();
+  if(showAllBtn) showAllBtn.style.display = hiddenCount > 1 ? 'block' : 'none';
+
+  updateSelectionOutline();
 }
 function stageToolDescription(mode){
   return mode === 'drag'
@@ -638,13 +735,48 @@ function rebuildSegmentedRig(){
     const lower=new THREE.Group();
     upper.add(makeSegmentMesh(partKey, cfg, false, false, geometries, materials), makeSegmentMesh(partKey, cfg, false, true, geometries, materials));
     lower.add(makeSegmentMesh(partKey, cfg, true, false, geometries, materials), makeSegmentMesh(partKey, cfg, true, true, geometries, materials));
-    root.add(upper, lowerJoint);
+    const connector=makeJointConnector(partKey, cfg, geometries, materials);
+    root.add(upper, lowerJoint, connector);
     lowerJoint.add(lower);
     part.add(root);
-    parts[partKey]={part, root, upper, lowerJoint};
+    parts[partKey]={part, root, upper, lower, lowerJoint, connector};
   }
   segmentedRig={parts, geometries, materials};
   syncSegmentedRig();
+}
+// Sample a representative limb colour so the joint connector blends in.
+function limbConnectorColor(cfg){
+  const canvas=state.viewer?.skinCanvas;
+  if(!canvas) return 0x9b6a4f;
+  try{
+    const ctx=canvas.getContext('2d', {willReadFrequently:true});
+    const scale=canvas.width/64;
+    // Front-centre texel of the limb's inner (base) layer.
+    const x=cfg.inner.u + 4 + valueOf(cfg.width)/2;
+    const y=cfg.inner.v + 4 + 3;
+    const color=sampleSkinPixel(ctx, scale, x, y);
+    if(color) return color.hex;
+  }catch(e){}
+  return 0x9b6a4f;
+}
+// A small block centred on the joint pivot that bridges the wedge gap left when
+// an elbow or knee is bent, so the limb has no unnatural break.
+function makeJointConnector(partKey, cfg, geometries, materials){
+  const width=valueOf(cfg.width);
+  const geometry=new THREE.BoxGeometry(width + 0.4, 4.6, 4.4);
+  const hex=limbConnectorColor(cfg);
+  const material=new THREE.MeshStandardMaterial({
+    color: hex,
+    emissive: hex,
+    emissiveIntensity: getLayerEmissive(),
+    roughness: 0.62,
+    metalness: 0,
+  });
+  const mesh=new THREE.Mesh(geometry, material);
+  mesh.name='connector';
+  mesh.position.set(valueOf(cfg.pivotX), cfg.pivotY, 0);
+  geometries.push(geometry); materials.push(material);
+  return mesh;
 }
 function makeSegmentMesh(partKey, cfg, lower, outer, geometries, materials){
   const width=valueOf(outer?cfg.outerWidth:cfg.width);
@@ -892,8 +1024,6 @@ function syncSceneUI(){
   $$('#skinLayerMode button').forEach(x=>x.classList.toggle('on', x.dataset.layer === state.render.layerStyle));
   $('#skinLayerDepth').value = state.render.layerDepth;
   $('#skinLayerDepthV').textContent = Number(state.render.layerDepth).toFixed(2);
-  $('#capeToggle').classList.toggle('on', state.cape);
-  $('#elytraToggle').classList.toggle('on', state.elytra);
   syncBgUI();
 }
 function syncThumbUI(){
@@ -1281,9 +1411,13 @@ function applyAll(){
 function captureModel(W,H){
   const v=state.viewer;
   const oW=v.width, oH=v.height, oPR=v.pixelRatio, oAuto=v.autoRotate;
+  // Never bake the selection outline into an export.
+  const outlineVis=selectionOutlines.map(o=>o.visible);
+  selectionOutlines.forEach(o=>{ o.visible=false; });
   v.autoRotate=false; v.pixelRatio=1; v.setSize(W,H); v.render();
   const out=document.createElement('canvas'); out.width=W; out.height=H;
   out.getContext('2d').drawImage(v.canvas,0,0,W,H);
+  selectionOutlines.forEach((o,i)=>{ o.visible=outlineVis[i]; });
   v.pixelRatio=oPR; v.setSize(oW,oH); v.autoRotate=oAuto; v.render();
   return out;
 }
@@ -1519,15 +1653,13 @@ function buildUI(){
   // poses
   $('#poseGrid').innerHTML = Object.entries(POSES).map(([k,p])=>`<button class="pose-btn" data-pose="${k}">${p.svg}<span>${p.label}</span></button>`).join('');
   // rig
-  $('#rig').innerHTML = `<div class="rig-tools">
-      <div class="rig-summary" id="rigSelectionSummary">Click a part to select it, drag empty space to box-select, then drag a selected part to pose it.</div>
+  $('#rig').innerHTML = `<div class="rig-tools" id="rigTools" style="display:none">
       <div class="rig-actions">
-        <button class="rig-action" id="clearSelectionBtn" type="button" disabled>Clear</button>
-        <button class="rig-action" id="hideSelectedPartsBtn" type="button" disabled>Hide selected</button>
-        <button class="rig-action" id="showAllPartsBtn" type="button">Show all</button>
+        <button class="rig-action" id="clearSelectionBtn" type="button">Clear</button>
+        <button class="rig-action" id="hideSelectedPartsBtn" type="button">Hide selected</button>
       </div>
-    </div>` + PARTS.map((p,i)=>`
-    <div class="rig-part${i===0?' open':''}" data-part="${p.key}">
+    </div>` + PARTS.map((p)=>`
+    <div class="rig-part" data-part="${p.key}">
       <div class="rig-head"><svg class="pj" viewBox="0 0 24 24" fill="none"><rect x="6" y="3" width="12" height="18" rx="2" stroke="currentColor" stroke-width="1.6"/></svg><span class="nm">${p.name}</span><button class="part-visibility" type="button" data-part-action="toggle-visibility" title="Hide part" aria-label="Hide part" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="2.8" stroke="currentColor" stroke-width="1.7"/></svg></button><svg class="cx" viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="m9 6 6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="rig-body"><div class="mini-grid">
         ${['x','y','z'].map(ax=>`<div class="mini"><label>${ax.toUpperCase()} ${ax==='x'?'pitch':ax==='y'?'yaw':'roll'}</label><input type="range" id="rig_${p.key}_${ax}" min="-180" max="180" value="0"><span class="val" style="text-align:left">0°</span></div>`).join('')}
@@ -1573,7 +1705,7 @@ function wire(){
   $('#nameInput').addEventListener('keydown',e=>{if(e.key==='Enter')loadByName($('#nameInput').value);});
   $('#browseBtn').onclick=()=>$('#fileSkin').click();
   $('#uploadField').onclick=e=>{ if(e.target.id!=='browseBtn')$('#fileSkin').click(); };
-  $('#fileSkin').onchange=e=>{const f=e.target.files[0];if(!f)return; $('#uploadName').value=f.name; const u=fileToURL(f); applySkin(u, f.name.replace(/\.[^.]+$/,'')); toast('Skin loaded');};
+  $('#fileSkin').onchange=e=>handleSkinFile(e.target.files[0]);
 
   // model
   $('#modelSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
@@ -1723,8 +1855,6 @@ function wire(){
     rebuildSecondLayerModel();
   },v=>(+v).toFixed(2));
   bindUndoField($('#skinLayerDepth'));
-  $('#capeToggle').onclick=()=>withUndo(()=>{state.cape=!state.cape;if(state.cape)state.elytra=false;$('#capeToggle').classList.toggle('on',state.cape);$('#elytraToggle').classList.remove('on');applyCape();});
-  $('#elytraToggle').onclick=()=>withUndo(()=>{state.elytra=!state.elytra;if(state.elytra)state.cape=false;$('#elytraToggle').classList.toggle('on',state.elytra);$('#capeToggle').classList.remove('on');applyCape();});
 
   // thumbnail
   $('#thumbToggle').onclick=()=>withUndo(()=>{state.thumb.on=!state.thumb.on;
@@ -1763,10 +1893,21 @@ function wire(){
   const stage=$('#stage');
   ['dragenter','dragover'].forEach(ev=>stage.addEventListener(ev,e=>{e.preventDefault();$('#dropMsg').classList.add('show');}));
   ['dragleave','drop'].forEach(ev=>stage.addEventListener(ev,e=>{e.preventDefault();if(ev==='drop'||!stage.contains(e.relatedTarget))$('#dropMsg').classList.remove('show');}));
-  stage.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f&&/image/.test(f.type)){applySkin(fileToURL(f),f.name.replace(/\.[^.]+$/,''));toast('Skin loaded');}});
+  stage.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f&&/image/.test(f.type))handleSkinFile(f);});
 
   window.addEventListener('resize',()=>updateThumbFrame());
   window.addEventListener('keydown', handleUndoKeydown);
+
+  // Clicking anywhere outside a rig part clears the selection. The viewer
+  // canvas manages its own selection (click a part to select, empty space to
+  // clear), so it is excluded here.
+  document.addEventListener('pointerdown', e=>{
+    if(!state.selectedParts.length || !isPosePaneActive()) return;
+    const t = e.target;
+    if(t?.closest?.('#rig') || t?.closest?.('#viewer')) return;
+    setSelectedParts([]);
+  });
+
   initStageInteraction();
 }
 
@@ -1788,9 +1929,6 @@ function setView(v){
 }
 function isPosePaneActive(){
   return !!$('.pane[data-pane="pose"]')?.classList.contains('on');
-}
-function selectionDragMode(partKeys){
-  return partKeys.length && partKeys.every(key=>LIMB_KEYS.has(key)) ? 'limb' : 'pivot';
 }
 function getPartFromObject(obj){
   let node=obj;
@@ -1868,11 +2006,23 @@ function hideMarquee(){
 function rotateSelectedParts(dx, dy){
   if(!state.selectedParts.length) return;
   clearAnim();
-  const mode=selectionDragMode(state.selectedParts);
+  const k = 0.45;
+  const group = state.selectedParts.length > 1;
   for(const key of state.selectedParts){
-    state.rig[key].x = clamp(state.rig[key].x - dy*0.45, -180, 180);
-    if(mode === 'limb') state.rig[key].z = clamp(state.rig[key].z + dx*0.45, -180, 180);
-    else state.rig[key].y = clamp(state.rig[key].y + dx*0.45, -180, 180);
+    const r = state.rig[key];
+    // Vertical drag swings every part fore/aft about the shared world X axis.
+    r.x = clamp(r.x - dy*k, -180, 180);
+    if(group){
+      // Move the whole selection together: each part turns the same world
+      // direction instead of pivoting independently. Mirrored limbs get an
+      // inverted roll so both sides swing the same way on screen.
+      if(LIMB_KEYS.has(key)) r.z = clamp(r.z + dx*k*(LIMB_SIDE_SIGN[key] || 1), -180, 180);
+      else r.y = clamp(r.y + dx*k, -180, 180);
+    }else if(LIMB_KEYS.has(key)){
+      r.z = clamp(r.z + dx*k, -180, 180);
+    }else{
+      r.y = clamp(r.y + dx*k, -180, 180);
+    }
   }
   syncRigUI();
   applyRig();

@@ -223,15 +223,16 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:1.5px solid va
 .mini input[type=range]{width:100%}
 .mini .val{text-align:right!important}
 .rig-tools{
-  display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
-  margin-bottom:10px;padding:11px 12px;border:1px dashed var(--line2);border-radius:8px;background:var(--panel2)
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  margin-bottom:10px;padding:10px 11px;border:1px dashed var(--line2);border-radius:8px;background:var(--panel2)
 }
-.rig-summary{flex:1 1 190px;font-size:11px;line-height:1.45;color:var(--muted)}
-.rig-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.rig-actions{display:flex;align-items:center;gap:6px;flex:1 1 auto}
 .rig-action{
   border:1px solid var(--line2);background:var(--panel);color:var(--ink2);border-radius:999px;
   padding:7px 10px;font-size:11px;font-weight:600;cursor:pointer;transition:.14s
 }
+.rig-tools .rig-action{flex:1 1 0;text-align:center}
+.rig-action.show-all-row{display:block;width:100%;margin-bottom:10px;text-align:center}
 .rig-action:hover{border-color:var(--line2);background:var(--panel2)}
 .rig-action:disabled{opacity:.48;cursor:default}
 .rig-part{border:1px solid var(--line2);border-radius:8px;margin-bottom:8px;overflow:hidden;background:var(--panel)}
